@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Movera - AI-assisted physiotherapy assessment and rehabilitation monitoring" />
+    <meta name="theme-color" content="#f5f8f7" />
+
+    <!--
+      Theme, resolved before the first paint.
+
+      This has to run here rather than in React. The bundle is fetched, parsed
+      and mounted after the document has already painted, so a dark reader
+      would get a full white flash on every load and every refresh - which is
+      the single most noticeable defect a dark theme can have.
+
+      Blocking and tiny on purpose. It reads one key and sets one attribute.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('movera.theme');
+          var theme =
+            stored === 'light' || stored === 'dark'
+              ? stored
+              : window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+          document.documentElement.dataset.theme = theme;
+          document
+            .querySelector('meta[name="theme-color"]')
+            .setAttribute('content', theme === 'dark' ? '#0d1413' : '#f5f8f7');
+        } catch (error) {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
+    <title>Movera</title>
+
+    <!--
+      Archivo, loaded across its weight and width axes.
+
+      `display=swap` means text paints immediately in the fallback stack and
+      swaps when the font arrives, so a machine with no internet - which is a
+      realistic demo machine - shows a complete, correctly laid out interface
+      rather than blank text or a stalled page. Nothing here blocks render.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..112,400..800&display=swap"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

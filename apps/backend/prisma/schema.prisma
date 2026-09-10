@@ -1,0 +1,697 @@
+// AI-Powered Intelligent Physiotherapy Assessment and Rehabilitation Monitoring System
+//
+// Design rules enforced throughout this schema:
+//   1. NestJS is the ONLY process that connects to this database.
+//   2. Identifiers are CUID2 strings everywhere - no mixed ID schemes.
+//   3. Domain relationships reference PatientProfile.id / TherapistProfile.id,
+//      not User.id, so a role is structurally required to hold a clinical relationship.
+//   4. JSONB is used ONLY where the shape is genuinely dynamic (CV rule configs,
+//      per-rep angle summaries, report statistics, notification payloads).
+//      Everything queryable is relational.
+//   5. Clinical history is never destroyed by tidying: exercises deactivate, they
+//      do not delete while sessions reference them.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+/// PATIENT and THERAPIST are the only roles reachable through public
+/// registration. ADMIN exists so the enum is extensible but is never assignable
+/// from any public endpoint - see AuthService.register.
+enum UserRole {
+  PATIENT
+  THERAPIST
+  ADMIN
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+/// What "finished" means for an exercise.
+///
+/// REPS  - a countable movement cycle (squat, curl). The session's goal is a
+///         number of repetitions.
+/// HOLD  - a sustained position with no movement cycle to count. Postural
+///         correction is the case that forced this: there is no honest way to
+///         say where one "repetition" of standing up straight ends, so the
+///         goal is time spent correctly aligned instead.
+///
+/// The distinction is not cosmetic. A HOLD session persists no RepResult rows
+/// at all, so anything that averages per-repetition scores has to take a
+/// different path - see ReportsService.finalizeSession.
+enum ExerciseGoalType {
+  REPS
+  HOLD
+}
+
+/// Single-camera pose analysis is highly view-dependent. Each exercise declares
+/// the view its posture rules were written for; rules that cannot be measured
+/// from that view are not evaluated.
+enum CameraView {
+  FRONT
+  SIDE
+  FRONT_OBLIQUE
+}
+
+enum LinkStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PlanStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum SessionStatus {
+  CREATED
+  ACTIVE
+  FINALIZING
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum Severity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+/// Marks whether a set of pose thresholds has been reviewed by a qualified
+/// physiotherapist. Everything seeded by this project is PROTOTYPE_DEFAULT.
+enum ValidationStatus {
+  PROTOTYPE_DEFAULT_REQUIRES_PHYSIOTHERAPIST_REVIEW
+  REVIEWED
+}
+
+enum NotificationType {
+  ASSIGNMENT_CREATED
+  PLAN_UPDATED
+  SESSION_COMPLETED
+  THERAPIST_FEEDBACK
+  EXERCISE_REMINDER
+  MISSED_SESSION
+  PATIENT_LINKED
+}
+
+enum FeedbackType {
+  SESSION
+  EXERCISE
+  PLAN
+  GENERAL
+}
+
+enum AssessmentStatus {
+  DRAFT
+  FINALISED
+}
+
+enum TrendDirection {
+  IMPROVING
+  STABLE
+  DECLINING
+  INSUFFICIENT_DATA
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String        @id @default(cuid(2))
+  /// Globally unique across BOTH roles: one email address is one account, so
+  /// the same person cannot hold a patient and a therapist login on it.
+  email        String        @unique
+  passwordHash String
+  role         UserRole
+  status       AccountStatus @default(ACTIVE)
+  firstName    String
+  lastName     String
+  /// IANA timezone (e.g. "Asia/Karachi"). Held on User because both roles need
+  /// it for schedule display; never hard-coded in application logic.
+  timezone     String        @default("UTC")
+
+  /// Login is refused until this is true. Existing accounts were backfilled to
+  /// true by the migration - a rollout that locks out live users is not an
+  /// acceptable way to introduce verification.
+  emailVerified   Boolean   @default(false)
+  emailVerifiedAt DateTime?
+
+  /// SHA-256 of the emailed token, never the token itself. Same reasoning as
+  /// PatientLinkInvite.codeHash and RefreshToken.tokenHash: a database leak
+  /// must not yield a working credential. The plaintext exists only in the
+  /// email that was sent.
+  verificationTokenHash   String?   @unique
+  verificationTokenExpiry DateTime?
+
+  /// Single-use password reset. Cleared the moment the password changes, so a
+  /// reset link cannot be replayed.
+  resetPasswordTokenHash   String?   @unique
+  resetPasswordTokenExpiry DateTime?
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  patientProfile   PatientProfile?
+  therapistProfile TherapistProfile?
+  refreshTokens    RefreshToken[]
+  notifications    Notification[]
+
+  @@index([role, status])
+  @@map("users")
+}
+
+model PatientProfile {
+  id               String    @id @default(cuid(2))
+  userId           String    @unique
+  dateOfBirth      DateTime?
+  phone            String?
+  conditionSummary String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  therapists  TherapistPatient[]
+  linkInvites PatientLinkInvite[]
+  plans       RehabilitationPlan[]
+  assignments ExerciseAssignment[]
+  sessions    ExerciseSession[]
+  assessments ClinicalAssessment[]
+  feedback    TherapistFeedback[]
+  estimates   ProgressEstimate[]
+
+  @@map("patient_profiles")
+}
+
+model TherapistProfile {
+  id              String   @id @default(cuid(2))
+  userId          String   @unique
+  /// Self-declared. This project performs NO verification of licence numbers
+  /// and must not claim otherwise.
+  licenseNumber   String?
+  specialization  String?
+  bio             String?
+  yearsExperience Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  patients       TherapistPatient[]
+  plans          RehabilitationPlan[]
+  assignments    ExerciseAssignment[]
+  assessments    ClinicalAssessment[]
+  feedback       TherapistFeedback[]
+  consumedInvite PatientLinkInvite[]
+
+  @@map("therapist_profiles")
+}
+
+/// The single source of truth for "may this therapist see this patient".
+/// Every therapist-scoped query in the application joins through this table -
+/// a patientId in a URL is never trusted on its own.
+model TherapistPatient {
+  id          String     @id @default(cuid(2))
+  therapistId String
+  patientId   String
+  status      LinkStatus @default(ACTIVE)
+  isPrimary   Boolean    @default(false)
+  linkedAt    DateTime   @default(now())
+  unlinkedAt  DateTime?
+
+  therapist TherapistProfile @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+  patient   PatientProfile   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@unique([therapistId, patientId])
+  @@index([therapistId, status])
+  @@index([patientId, status])
+  @@map("therapist_patients")
+}
+
+/// A therapist cannot claim a patient by typing their email address. The patient
+/// generates a short code; only the hash is stored, and it is single-use.
+model PatientLinkInvite {
+  id          String    @id @default(cuid(2))
+  patientId   String
+  codeHash    String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  usedById    String?
+  createdAt   DateTime  @default(now())
+
+  patient PatientProfile    @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  usedBy  TherapistProfile? @relation(fields: [usedById], references: [id], onDelete: SetNull)
+
+  @@index([patientId, expiresAt])
+  @@map("patient_link_invites")
+}
+
+model RefreshToken {
+  id           String    @id @default(cuid(2))
+  userId       String
+  /// SHA-256 of the raw token. The raw value is never stored or logged.
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  /// Set when this token is rotated, forming a chain. If a token that already
+  /// has a successor is presented again, the whole chain is revoked (reuse
+  /// detection).
+  replacedById String?   @unique
+  userAgent    String?
+  createdAt    DateTime  @default(now())
+
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  replacedBy RefreshToken? @relation("TokenRotation", fields: [replacedById], references: [id], onDelete: SetNull)
+  replaces   RefreshToken? @relation("TokenRotation")
+
+  @@index([userId, expiresAt])
+  @@map("refresh_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Exercise library
+// ---------------------------------------------------------------------------
+
+model Exercise {
+  id                  String     @id @default(cuid(2))
+  name                String
+  slug                String     @unique
+  description         String
+  instructions        String
+  category            String
+  difficulty          Difficulty @default(MEDIUM)
+  targetBodyArea      String
+  recommendedView     CameraView @default(SIDE)
+  framingInstructions String
+  defaultSets         Int        @default(3)
+  defaultReps         Int        @default(10)
+
+  /// REPS for every countable exercise; HOLD for sustained-position work.
+  goalType ExerciseGoalType @default(REPS)
+  /// Prescribed seconds of correct alignment, for HOLD exercises only.
+  /// Null for REPS exercises, where sets x reps is the goal instead.
+  defaultHoldSeconds Int?
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ruleConfigs ExerciseRuleConfig[]
+  assignments ExerciseAssignment[]
+  sessions    ExerciseSession[]
+
+  @@index([isActive, category])
+  @@map("exercises")
+}
+
+/// Versioned, system-managed computer-vision rules for one exercise.
+///
+/// These are deliberately NOT editable by ordinary therapists: a single global
+/// edit would change squat analysis for every patient in the system. Therapists
+/// configure sets, reps, difficulty and schedule on the assignment instead.
+///
+/// Exactly one row per exercise may have isActive = true. That is enforced by a
+/// partial unique index created in migration `20260828_partial_unique_indexes`
+/// (Prisma's schema language cannot express a filtered unique constraint).
+model ExerciseRuleConfig {
+  id      String @id @default(cuid(2))
+  exerciseId String
+  version    Int
+
+  /// Landmark names that must be visible before any analysis runs.
+  /// e.g. ["LEFT_HIP","RIGHT_HIP","LEFT_KNEE","RIGHT_KNEE","LEFT_ANKLE","RIGHT_ANKLE"]
+  requiredLandmarks Json
+  /// Named three-point angle definitions, e.g.
+  /// {"leftKnee":{"a":"LEFT_HIP","b":"LEFT_KNEE","c":"LEFT_ANKLE","space":"WORLD"}}
+  angleDefinitions  Json
+  /// Movement state thresholds incl. hysteresis, dwell and cooldown.
+  movementStateConfig Json
+  /// Posture rules evaluated per frame, each carrying an ErrorCode + severity.
+  postureRules      Json
+
+  /// Minimum per-landmark visibility for a landmark to count as present.
+  minVisibility           Float            @default(0.5)
+  /// A repetition counts as "correct" at or above this score, absent any
+  /// CRITICAL error. Stored here so the value is never hard-coded in code.
+  repCorrectnessThreshold Float            @default(70)
+  validationStatus        ValidationStatus @default(PROTOTYPE_DEFAULT_REQUIRES_PHYSIOTHERAPIST_REVIEW)
+  isActive                Boolean          @default(false)
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
+
+  exercise Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+
+  @@unique([exerciseId, version])
+  @@index([exerciseId, isActive])
+  @@map("exercise_rule_configs")
+}
+
+// ---------------------------------------------------------------------------
+// Prescription
+// ---------------------------------------------------------------------------
+
+/// At most one ACTIVE plan per patient. Enforced by a partial unique index
+/// (see migration `20260828_partial_unique_indexes`) plus a service-layer
+/// transaction, because Prisma cannot express a filtered unique constraint.
+model RehabilitationPlan {
+  id          String     @id @default(cuid(2))
+  patientId   String
+  therapistId String
+  title       String
+  goals       String?
+  startDate   DateTime
+  endDate     DateTime?
+  status      PlanStatus @default(ACTIVE)
+  notes       String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  patient     PatientProfile       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  therapist   TherapistProfile     @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+  assignments ExerciseAssignment[]
+
+  @@index([patientId, status])
+  @@index([therapistId, status])
+  @@map("rehabilitation_plans")
+}
+
+model ExerciseAssignment {
+  id          String @id @default(cuid(2))
+  planId      String?
+  patientId   String
+  therapistId String
+  exerciseId  String
+
+  targetSets Int
+  repsPerSet Int
+  /// HOLD exercises only: seconds of correct alignment to accumulate.
+  /// Null means "use the exercise's defaultHoldSeconds". Ignored entirely for
+  /// REPS exercises, where targetSets x repsPerSet is the goal.
+  holdSeconds Int?
+
+  difficulty       Difficulty @default(MEDIUM)
+  frequencyPerWeek Int?
+  /// ISO weekday numbers, 1 = Monday .. 7 = Sunday.
+  scheduledDays    Int[]      @default([])
+  /// "HH:mm" in the patient's timezone. Display/reminder hint only.
+  preferredTime    String?
+
+  startDate    DateTime
+  endDate      DateTime?
+  instructions String?
+  status       AssignmentStatus @default(ACTIVE)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  plan      RehabilitationPlan? @relation(fields: [planId], references: [id], onDelete: SetNull)
+  patient   PatientProfile      @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  therapist TherapistProfile    @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+  exercise  Exercise            @relation(fields: [exerciseId], references: [id], onDelete: Restrict)
+  sessions  ExerciseSession[]
+
+  @@index([patientId, status])
+  @@index([therapistId, status])
+  @@index([planId])
+  @@map("exercise_assignments")
+}
+
+// ---------------------------------------------------------------------------
+// Sessions - the authoritative record of what a patient actually did
+// ---------------------------------------------------------------------------
+
+/// One session = one complete occurrence of an assigned exercise
+/// (e.g. the whole of "3 sets x 10 reps" = 30 target repetitions).
+///
+/// totalReps / correctReps / incorrectReps / performanceScore are written ONLY
+/// by SessionsService.complete(), never by a client and never incrementally.
+model ExerciseSession {
+  id           String @id @default(cuid(2))
+  patientId    String
+  assignmentId String
+  exerciseId   String
+  /// The ExerciseRuleConfig.version the pose service analysed against, captured
+  /// at session creation so a later rule change cannot retroactively alter a
+  /// historical report.
+  ruleConfigVersion Int
+
+  status SessionStatus @default(CREATED)
+
+  /// Copied from the exercise at session creation, so a later library change
+  /// cannot retroactively reinterpret a finished session's numbers.
+  goalType ExerciseGoalType @default(REPS)
+
+  targetSets      Int
+  repsPerSet      Int
+  targetTotalReps Int
+  /// HOLD sessions: seconds of correct alignment prescribed, and seconds
+  /// actually accumulated. Both null on REPS sessions.
+  targetHoldSec   Int?
+  heldSec         Float?
+
+  /// Row creation / CREATED transition.
+  startedAt   DateTime  @default(now())
+  /// Set when the pose service confirms an analyzer is attached (-> ACTIVE).
+  activatedAt DateTime?
+  endedAt     DateTime?
+  durationSec Int?
+
+  totalReps     Int @default(0)
+  correctReps   Int @default(0)
+  incorrectReps Int @default(0)
+
+  performanceScore      Float?
+  avgTrackingConfidence Float?
+
+  /// HOLD sessions only: the latest CUMULATIVE aggregate posted by the pose
+  /// service - {heldSec, analysedFrames, meanScore, meanConfidence,
+  /// angleStats, errors}.
+  ///
+  /// A HOLD session produces no RepResult rows, so without this a browser that
+  /// dies mid-session would leave nothing to report on. Snapshots are
+  /// cumulative rather than incremental, which makes a retry or a lost update
+  /// self-correcting: the next one supersedes it.
+  holdSummary Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patient    PatientProfile     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  assignment ExerciseAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  exercise   Exercise           @relation(fields: [exerciseId], references: [id], onDelete: Restrict)
+
+  reps     RepResult[]
+  errors   SessionError[]
+  metrics  SessionMetric[]
+  report   SessionReport?
+  feedback TherapistFeedback[]
+
+  @@index([patientId, startedAt(sort: Desc)])
+  @@index([assignmentId, status])
+  @@index([status, startedAt])
+  @@map("exercise_sessions")
+}
+
+/// One completed repetition, ingested from the pose service over the internal
+/// service channel. Never written by the browser.
+model RepResult {
+  id        String @id @default(cuid(2))
+  sessionId String
+  /// Absolute rep number within the session, 1 .. targetTotalReps.
+  repNumber Int
+  /// Derived set number, 1 .. targetSets. Stored to keep reporting cheap.
+  setNumber Int
+
+  startedAt   DateTime
+  completedAt DateTime
+
+  correct            Boolean
+  score              Float
+  trackingConfidence Float
+
+  /// Per-rep angle statistics, e.g.
+  /// {"leftKnee":{"min":84.2,"max":171.0,"atPeak":84.2}}
+  /// Shape varies per exercise, so JSONB is genuinely appropriate here.
+  angleSummary Json
+
+  /// Deterministic key supplied by the pose service ("<sessionId>:<repNumber>")
+  /// so a network retry cannot create a duplicate repetition.
+  ingestKey String   @unique
+  createdAt DateTime @default(now())
+
+  session ExerciseSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  errors  SessionError[]
+
+  @@unique([sessionId, repNumber])
+  @@index([sessionId, repNumber])
+  @@map("rep_results")
+}
+
+/// Structured, queryable errors. Kept relational (not buried in JSON) so that
+/// "most common problem this month" is a GROUP BY rather than a scan.
+model SessionError {
+  id          String @id @default(cuid(2))
+  sessionId   String
+  repResultId String?
+  /// Value from the shared ErrorCode catalogue, validated on ingest.
+  code        String
+  severity    Severity
+  occurrences Int      @default(1)
+  createdAt   DateTime @default(now())
+
+  session   ExerciseSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  repResult RepResult?      @relation(fields: [repResultId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, code])
+  @@index([code])
+  @@map("session_errors")
+}
+
+/// Sparse numeric session metrics (peak knee flexion, mean cadence, ...).
+model SessionMetric {
+  id        String @id @default(cuid(2))
+  sessionId String
+  key       String
+  value     Float
+
+  session ExerciseSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, key])
+  @@map("session_metrics")
+}
+
+/// One report per session. The unique constraint on sessionId is what makes
+/// session completion idempotent - a second COMPLETE returns this row.
+model SessionReport {
+  id          String   @id @default(cuid(2))
+  sessionId   String   @unique
+  generatedAt DateTime @default(now())
+  summary     String
+
+  /// {"leftKnee":{"min":80.1,"max":172.4,"mean":126.2}}
+  angleStats      Json
+  /// [{"code":"TRUNK_LEAN","severity":"WARNING","occurrences":7}]
+  commonErrors    Json
+  /// {"meanConfidence":0.91,"minConfidence":0.62,"framesAnalysed":1804}
+  trackingSummary Json?
+  createdAt       DateTime @default(now())
+
+  session ExerciseSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("session_reports")
+}
+
+// ---------------------------------------------------------------------------
+// Clinical follow-up
+// ---------------------------------------------------------------------------
+
+model ClinicalAssessment {
+  id          String   @id @default(cuid(2))
+  patientId   String
+  therapistId String
+  assessedAt  DateTime
+
+  /// Patient-reported 0-10 scale. Optional, therapist-entered.
+  painScore Int?
+  romNotes  String?
+  findings  String
+  notes     String?
+
+  status    AssessmentStatus @default(DRAFT)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  patient   PatientProfile   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  therapist TherapistProfile @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, assessedAt(sort: Desc)])
+  @@index([therapistId, assessedAt(sort: Desc)])
+  @@map("clinical_assessments")
+}
+
+model TherapistFeedback {
+  id          String       @id @default(cuid(2))
+  therapistId String
+  patientId   String
+  sessionId   String?
+  type        FeedbackType @default(GENERAL)
+  body        String
+  readAt      DateTime?
+  createdAt   DateTime     @default(now())
+
+  therapist TherapistProfile @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+  patient   PatientProfile   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  session   ExerciseSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, createdAt(sort: Desc)])
+  @@index([therapistId, createdAt(sort: Desc)])
+  @@map("therapist_feedback")
+}
+
+model Notification {
+  id      String           @id @default(cuid(2))
+  userId  String
+  type    NotificationType
+  title   String
+  message String
+  read    Boolean          @default(false)
+  /// Deep-link context, e.g. {"sessionId":"...","assignmentId":"..."}
+  payload Json?
+  createdAt DateTime       @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read, createdAt(sort: Desc)])
+  @@map("notifications")
+}
+
+// ---------------------------------------------------------------------------
+// Experimental analytics (Phase 6)
+// ---------------------------------------------------------------------------
+
+/// Output of the experimental scikit-learn performance-trend module.
+/// Deliberately named "estimate" and never "prediction" or "recovery forecast":
+/// it is trained on labelled synthetic development data and carries no
+/// clinical validity.
+model ProgressEstimate {
+  id           String         @id @default(cuid(2))
+  patientId    String
+  generatedAt  DateTime       @default(now())
+  horizonDays  Int
+  /// Feature vector actually fed to the model, kept for reproducibility.
+  features     Json
+  trend        TrendDirection
+  confidence   Float
+  modelVersion String
+
+  patient PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, generatedAt(sort: Desc)])
+  @@map("progress_estimates")
+}

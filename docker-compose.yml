@@ -1,0 +1,141 @@
+# ---------------------------------------------------------------------------
+# Full demo stack: postgres + backend + pose-service + frontend
+#
+#   cp .env.example .env      # then fill in the four secrets
+#   docker compose up --build
+#
+#   Frontend  http://localhost:5173
+#   API docs  http://localhost:3000/api/docs
+#   Pose docs http://localhost:8000/docs
+#
+# NOTE: this file has been WRITTEN but NOT VERIFIED - Docker is not installed
+# on the development machine this project was built on. See docs/BUILD_STATUS.md.
+# The native workflow in docs/SETUP.md is the verified path.
+# ---------------------------------------------------------------------------
+
+name: physio-ai-platform
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-physio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-physio_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-physio}
+    ports:
+      # Exposed so Prisma Studio and psql can reach it from the host.
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Container start order is NOT readiness - the backend waits for this
+      # probe, not merely for the container to exist.
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-physio} -d ${POSTGRES_DB:-physio}']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      DATABASE_URL: postgresql://${POSTGRES_USER:-physio}:${POSTGRES_PASSWORD:-physio_dev_password}@postgres:5432/${POSTGRES_DB:-physio}?schema=public
+      # Browser-facing origin, not a compose hostname.
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set JWT_ACCESS_SECRET in .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET in .env}
+      JWT_ACCESS_EXPIRES_IN: ${JWT_ACCESS_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      POSE_TICKET_SECRET: ${POSE_TICKET_SECRET:?set POSE_TICKET_SECRET in .env}
+      POSE_SERVICE_TOKEN: ${POSE_SERVICE_TOKEN:?set POSE_SERVICE_TOKEN in .env}
+      POSE_SERVICE_URL: http://pose-service:8000
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    ports:
+      - '3000:3000'
+    # Apply migrations before serving. `migrate deploy` is the production
+    # command - it never generates or resets, unlike `migrate dev`.
+    command: >
+      sh -c "npx prisma migrate deploy --schema prisma/schema.prisma &&
+             node dist/main.js"
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:3000/api/v1/health']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  pose-service:
+    build:
+      context: ./services/pose-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      POSE_ENVIRONMENT: production
+      POSE_SERVICE_PORT: '8000'
+      # Must match the backend's values exactly - this is how the two services
+      # authenticate each other.
+      POSE_TICKET_SECRET: ${POSE_TICKET_SECRET:?set POSE_TICKET_SECRET in .env}
+      POSE_SERVICE_TOKEN: ${POSE_SERVICE_TOKEN:?set POSE_SERVICE_TOKEN in .env}
+      BACKEND_INTERNAL_URL: http://backend:3000
+      ALLOWED_ORIGINS: ${FRONTEND_URL:-http://localhost:5173}
+      POSE_MODEL_PATH: app/pose/model/pose_landmarker_full.task
+      POSE_NUM_POSES: '2'
+      LANDMARK_VISIBILITY_THRESHOLD: '0.5'
+      POSE_MAX_CONCURRENT_SESSIONS: ${POSE_MAX_CONCURRENT_SESSIONS:-8}
+    ports:
+      - '8000:8000'
+    healthcheck:
+      # /ready, not /health: it verifies the pose model actually loaded. A
+      # service that answers /health but has no model would accept every
+      # WebSocket and then fail it.
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:8000/ready']
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+    # MediaPipe inference is CPU-bound; without a cap it can starve the
+    # database on a laptop running the whole stack.
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+      args:
+        # Baked in at build time by Vite - these are BROWSER-facing URLs.
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3000/api/v1}
+        VITE_POSE_WS_URL: ${VITE_POSE_WS_URL:-ws://localhost:8000/ws/session}
+        VITE_POSE_FRAME_SAMPLE_FPS: ${VITE_POSE_FRAME_SAMPLE_FPS:-10}
+        VITE_POSE_IMAGE_WIDTH: ${VITE_POSE_IMAGE_WIDTH:-480}
+        VITE_POSE_IMAGE_QUALITY: ${VITE_POSE_IMAGE_QUALITY:-0.6}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - '5173:80'
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost/healthz']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  pgdata:

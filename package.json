@@ -1,0 +1,29 @@
+{
+  "name": "physio-ai-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI-Powered Intelligent Physiotherapy Assessment and Rehabilitation Monitoring System",
+  "license": "UNLICENSED",
+  "workspaces": [
+    "apps/backend",
+    "apps/frontend"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "backend:dev": "npm run start:dev --workspace=@physio/backend",
+    "backend:build": "npm run build --workspace=@physio/backend",
+    "backend:test": "npm run test --workspace=@physio/backend",
+    "backend:test:e2e": "npm run test:e2e --workspace=@physio/backend",
+    "frontend:dev": "npm run dev --workspace=@physio/frontend",
+    "frontend:build": "npm run build --workspace=@physio/frontend",
+    "frontend:test": "npm run test --workspace=@physio/frontend",
+    "db:up": "npm run db:up --workspace=@physio/backend",
+    "db:down": "npm run db:down --workspace=@physio/backend",
+    "db:migrate": "npm run prisma:migrate --workspace=@physio/backend",
+    "db:seed": "npm run prisma:seed --workspace=@physio/backend",
+    "db:studio": "npm run prisma:studio --workspace=@physio/backend",
+    "openapi:types": "npm run openapi:types --workspace=@physio/frontend"
+  }
+}

@@ -1,0 +1,41 @@
+# Processed by the nginx image's entrypoint: every ${VAR} that is set in the
+# container environment is substituted, then the result is written to
+# /etc/nginx/conf.d/default.conf before nginx starts. $uri, $http_upgrade and
+# friends are NOT in the environment, so they pass through untouched.
+#
+# ${PORT} is injected by Railway at runtime; ${PORT:-80} keeps a plain
+# `docker run` working. NGINX_ENVSUBST vars in the Dockerfile pin the list so
+# nothing else is touched.
+server {
+    listen ${PORT};
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Single-page app: every unknown path must fall through to index.html,
+    # otherwise a refresh on /patient/progress returns 404.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Hashed asset filenames are immutable, so they can be cached hard.
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # index.html must never be cached, or a deploy leaves clients on old code.
+    location = /index.html {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }
+
+    location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+        add_header Content-Type text/plain;
+    }
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+}

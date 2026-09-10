@@ -1,0 +1,42 @@
+# Pose service dependencies.
+#
+# Deliberately ABSENT (present in the original prototype, not needed here):
+#   sqlalchemy                     - this service never touches the database
+#   passlib / python-jose / bcrypt - it issues no application credentials;
+#                                    it only *verifies* short-lived pose tickets
+#
+# LICENCE NOTE: ultralytics YOLOv8 is AGPL-3.0. That is a copyleft licence
+# covering network use, so distributing or hosting this service obliges you to
+# make its source available under the same terms. Fine for an academic project;
+# it is a real constraint on any commercial deployment.
+
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+pydantic==2.11.1
+pydantic-settings==2.8.1
+
+# Pose estimation. YOLOv8n-pose returns the 17-point COCO keypoint set as 2-D
+# pixel coordinates plus per-keypoint confidence. Weights are NOT committed -
+# fetch them with `python scripts/download_model.py`.
+#
+# ultralytics pulls torch and torchvision. On Windows these resolve to the
+# CPU wheels, which is what this service runs on.
+ultralytics>=8.3.49
+torch>=2.0.0
+torchvision>=0.15.0
+
+# opencv-python (not headless): ultralytics depends on opencv-python directly,
+# and installing both variants into one environment leaves two copies of cv2
+# fighting over the same import name.
+opencv-python>=4.10.0
+numpy>=1.26.4
+
+httpx==0.28.1
+PyJWT==2.10.1
+python-multipart==0.0.20
+websockets==15.0.1
+
+# --- development / test ---
+pytest==8.3.5
+pytest-asyncio==0.26.0
+ruff==0.11.2

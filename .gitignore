@@ -1,0 +1,62 @@
+# ---------- Node ----------
+node_modules/
+dist/
+build/
+coverage/
+.npm/
+*.tsbuildinfo
+.eslintcache
+.vite/
+
+# ---------- Environment ----------
+# .env.example files MUST stay tracked - they are documentation.
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# ---------- Python ----------
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# ---------- Pose model artifacts ----------
+# Downloaded MediaPipe .task bundles are fetched by scripts/download_model.py
+services/pose-service/app/pose/model/*.task
+
+# ---------- Databases / local data ----------
+*.db
+*.sqlite
+*.sqlite3
+# The embedded-postgres fallback cluster (apps/backend/.pgdata) is a ~40 MB
+# live PostgreSQL data directory. The leading dot matters: a bare `pgdata/`
+# pattern does NOT match `.pgdata/`.
+pgdata/
+.pgdata/
+# Database dumps taken when migrating to local PostgreSQL. They contain real
+# row data and role passwords, so they never enter the repository.
+.pgdump/
+
+# ---------- Archives (disposable, never source) ----------
+*.zip
+*.tar
+*.tar.gz
+
+# ---------- IDE / OS ----------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+
+# ---------- Logs ----------
+logs/
+*.log
+npm-debug.log*

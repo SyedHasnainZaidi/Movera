@@ -1,0 +1,851 @@
+@import 'tailwindcss';
+
+/*
+ * Dark mode is driven by an attribute, not by the media query alone.
+ *
+ * `data-theme` is written to <html> by the theme store, and seeded by a small
+ * script in index.html before the first paint. Tailwind's default `dark:`
+ * variant follows `prefers-color-scheme` only, which cannot express "this
+ * reader chose light on a machine set to dark".
+ */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/*
+ * Movera design system.
+ *
+ * Concept: the goniometer - the hinged, degree-marked protractor a
+ * physiotherapist actually holds against a joint. The product measures angles,
+ * counts repetitions and times held positions, so the interface is built as an
+ * instrument rather than as a set of content cards: arcs, ticks, calibrated
+ * readouts, and motion that only ever happens because something moved.
+ *
+ * Three rules the rest of the app inherits from here:
+ *
+ *   1. Colour never carries meaning alone. Every state also has a word, an
+ *      icon, or a change of shape - a patient with colour-vision deficiency
+ *      must be able to tell a correct repetition from an incorrect one.
+ *   2. Radius encodes level, it is not decoration. Readout < panel < card <
+ *      stage.
+ *   3. Motion answers a change. Nothing loops for atmosphere except the pose
+ *      figure on the sign-in panel, which exists to show what the product does
+ *      before you have an account.
+ */
+
+@theme {
+  /* --- brand ------------------------------------------------------------
+   * Clinical teal. Deepened from the original spa-ish tint so it reads as
+   * instrument-grade, and extended to 950 for the live-session console.
+   *
+   * brand-400 is the "live" teal: it is the colour of the skeleton drawn over
+   * the camera, so anything tinted with it means "the system can see you".
+   */
+  --color-brand-50: #eef6f4;
+  --color-brand-100: #d5eae6;
+  --color-brand-200: #a9d6cf;
+  --color-brand-300: #77bcb1;
+  --color-brand-400: #479c92;
+  --color-brand-500: #2b7f76;
+  --color-brand-600: #1c6660;
+  --color-brand-700: #16514d;
+  --color-brand-800: #12403e;
+  --color-brand-900: #0e3432;
+  --color-brand-950: #071f1e;
+
+  /* --- ink ---------------------------------------------------------------
+   * Neutrals pulled towards deep teal-green rather than towards blue-grey, so
+   * they sit under the brand instead of arguing with it. ink-950 is the
+   * console ground: a real dark green-black, chosen, not a tinted stand-in for
+   * black.
+   */
+  --color-ink-50: #f5f8f7;
+  --color-ink-100: #e9efed;
+  --color-ink-200: #d4dedb;
+  --color-ink-300: #b1c0bc;
+  --color-ink-400: #83948f;
+  --color-ink-500: #5e706c;
+  --color-ink-600: #495956;
+  --color-ink-700: #394744;
+  --color-ink-800: #263230;
+  --color-ink-900: #17201f;
+  --color-ink-950: #0b1211;
+
+  /* --- semantic ----------------------------------------------------------
+   * Kept separate from the brand accent so a form warning is never mistaken
+   * for a primary action. The 500/700 values are unchanged: the contrast
+   * pairings built on them were already checked. The 300 steps are new, for
+   * use on the dark console where the darker steps disappear.
+   */
+  --color-good-50: #edf6ee;
+  --color-good-300: #7fbb90;
+  --color-good-500: #2f7d46;
+  --color-good-700: #205932;
+
+  --color-caution-50: #fdf4e3;
+  --color-caution-300: #e0b968;
+  --color-caution-500: #a97514;
+  --color-caution-700: #7a5307;
+
+  --color-problem-50: #fbecea;
+  --color-problem-300: #dd9186;
+  --color-problem-500: #b03a2b;
+  --color-problem-700: #832a1e;
+
+  /* --- accent ------------------------------------------------------------
+   * Muted indigo. Used for a SECOND data series and for measured emphasis -
+   * never for status, so it cannot be read as "something is wrong".
+   */
+  --color-accent-300: #93a5da;
+  --color-accent-500: #4a5fa5;
+  --color-accent-700: #33437a;
+
+  /* --- surfaces ----------------------------------------------------------
+   * The two grounds every page is built on. Named for their ROLE rather than
+   * their lightness, because that is the only thing that stays true when the
+   * theme flips: `canvas` is always the page behind everything, `surface` is
+   * always the panel raised off it.
+   *
+   * This is why the app does not simply use `bg-white` for a card. A literal
+   * white cannot be dark, and a card is not white - it is the raised surface,
+   * which happens to be white under one theme.
+   */
+  --color-canvas: #f5f8f7;
+  --color-surface: #ffffff;
+  /* An inset well: a code sample, an input on a card, a hovered row. */
+  --color-sunken: #eef3f1;
+
+  /* --- stage -------------------------------------------------------------
+   * The surfaces that are dark in BOTH themes, and the text that sits on them.
+   *
+   * Three places qualify: the camera console, the Today panel on the patient's
+   * home page, and the sign-in figure's panel. They are dark for reasons that
+   * have nothing to do with a preference - a video belongs on black, a screen
+   * a patient stands three metres from should not throw light back at them,
+   * and the dark ground is what marks the Today panel as the way into a
+   * session.
+   *
+   * They therefore need a palette that does NOT invert. These values are the
+   * light theme's ink ramp, pinned: `stage-100` is always the brightest text
+   * and `stage-500` always the quietest, whichever theme is on.
+   */
+  --color-stage: #0b1211;
+  --color-stage-glow: #0e3432;
+  --color-stage-100: #e9efed;
+  --color-stage-200: #d4dedb;
+  --color-stage-300: #b1c0bc;
+  --color-stage-400: #83948f;
+  --color-stage-500: #5e706c;
+
+  /* --- solid accent ------------------------------------------------------
+   * The primary button, kept out of the brand ramp on purpose.
+   *
+   * A filled control needs a background AND a legible foreground, and the two
+   * do not move together when the theme flips: on light the fill is dark teal
+   * with white on it, on dark the fill is pale teal with near-black on it.
+   * Expressing that as ramp steps would make some steps mean "background" and
+   * others mean "text", which is how a palette stops being predictable.
+   */
+  --color-accent-solid: #1c6660;
+  --color-accent-solid-hover: #16514d;
+  --color-accent-solid-active: #12403e;
+  --color-on-accent: #ffffff;
+
+  /* --- type --------------------------------------------------------------
+   * One family, two roles, separated by WIDTH rather than by a second
+   * typeface. Archivo carries a width axis as well as a weight axis, so
+   * display type is set narrower and tighter while body text stays at normal
+   * width - the difference reads as deliberate without introducing a second
+   * voice.
+   *
+   * The previous stack named 'Inter var' but nothing ever loaded it, so every
+   * screen was silently rendering in the platform default. The fallbacks below
+   * are real choices rather than filler: if the webfont does not arrive, the
+   * app still gets a humanist sans with tabular figures.
+   */
+  --font-sans: 'Archivo', 'Segoe UI Variable Text', 'Segoe UI', system-ui,
+    -apple-system, 'Helvetica Neue', sans-serif;
+  --font-display: 'Archivo', 'Segoe UI Variable Display', 'Segoe UI', system-ui,
+    -apple-system, sans-serif;
+
+  /* --- radius ------------------------------------------------------------
+   * Four levels, and the level means something:
+   *   readout - a single measured value inside a panel
+   *   panel   - one instrument in the console
+   *   card    - a block of content on a light page
+   *   stage   - the camera view; the largest object gets the largest radius
+   */
+  --radius-readout: 6px;
+  --radius-panel: 10px;
+  --radius-card: 14px;
+  --radius-stage: 20px;
+
+  /* --- elevation ---------------------------------------------------------
+   * Two working shadows, not one grey blur under everything. `panel` is a
+   * whisper of depth for a resting surface; `lift` is for something the
+   * pointer is currently on; `stage` seats the camera view in the console.
+   */
+  --shadow-panel: 0 1px 2px rgb(11 18 17 / 0.04), 0 1px 1px rgb(11 18 17 / 0.03);
+  --shadow-lift: 0 6px 16px -6px rgb(11 18 17 / 0.16),
+    0 2px 4px -2px rgb(11 18 17 / 0.08);
+  --shadow-stage: 0 24px 60px -24px rgb(0 0 0 / 0.6);
+
+  /* --- motion ------------------------------------------------------------
+   * Named after what they describe, so a reviewer can tell when the wrong
+   * curve has been used:
+   *   limb   - symmetric in and out, the way a joint travels and returns
+   *   settle - decelerates into place and stops; for things arriving
+   *   land   - overshoots slightly; for a repetition completing
+   */
+  --ease-limb: cubic-bezier(0.65, 0.05, 0.36, 1);
+  --ease-settle: cubic-bezier(0.16, 0.84, 0.44, 1);
+  --ease-land: cubic-bezier(0.22, 1.4, 0.36, 1);
+
+  --animate-live-pulse: live-pulse 2s var(--ease-limb) infinite;
+  --animate-breathe: breathe 3.6s ease-in-out infinite;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-rep-land: rep-land 460ms var(--ease-land);
+  --animate-cue-in: cue-in 260ms var(--ease-settle);
+  --animate-tick-in: tick-in 320ms var(--ease-land) backwards;
+  --animate-meter-grow: meter-grow 760ms var(--ease-settle);
+}
+
+/*
+ * Durations sit outside @theme on purpose: they are read by inline styles and
+ * by the reduced-motion block, and are not meant to become utilities.
+ */
+:root {
+  --dur-fast: 140ms;
+  --dur-base: 260ms;
+  --dur-slow: 520ms;
+}
+
+/* --------------------------------------------------------------------------
+ * Dark theme
+ * ------------------------------------------------------------------------ */
+
+/*
+ * One rule, and the whole application follows it: the token values change, the
+ * markup does not.
+ *
+ * The `ink` ramp INVERTS. It was already semantic rather than literal - 50 is
+ * the quietest surface and 900 the loudest text - so turning it end for end
+ * carries every heading, hairline and caption across without a single `dark:`
+ * utility in a page. That is what makes a theme switch affordable on an
+ * application this size: roughly two hundred colour classes were already
+ * saying what they meant.
+ *
+ * Three families deliberately do NOT invert:
+ *
+ *   - 300 steps stay light. They exist for text on a dark tint, which is what
+ *     a dark tint still needs.
+ *   - 500 steps stay mid. They fill progress bars and chart lines, and a fill
+ *     that flips lightness stops meaning the same thing.
+ *   - 700 steps DO flip, because they are only ever text on a 50 tint, and
+ *     that tint has just gone dark.
+ *
+ * The dark end is compressed rather than mirrored exactly. A true inversion
+ * produces surfaces that separate far too strongly - dark interfaces need less
+ * distance between their steps than light ones do to read as the same design.
+ */
+[data-theme='dark'] {
+  --color-canvas: #0d1413;
+  --color-surface: #171f1e;
+  --color-sunken: #1e2827;
+
+  --color-ink-50: #111917;
+  --color-ink-100: #1b2523;
+  --color-ink-200: #26322f;
+  --color-ink-300: #35433f;
+  --color-ink-400: #7d8d89;
+  --color-ink-500: #94a29e;
+  --color-ink-600: #b0bcb8;
+  --color-ink-700: #c8d2cf;
+  --color-ink-800: #dfe7e4;
+  --color-ink-900: #f0f4f3;
+  --color-ink-950: #ffffff;
+
+  /* Tints go dark; the text that sits on them goes light. */
+  --color-brand-50: #0f2624;
+  --color-brand-100: #143331;
+  --color-brand-200: #1b453f;
+  --color-brand-300: #8fcbc1;
+  --color-brand-400: #6cb5aa;
+  --color-brand-500: #479c92;
+  --color-brand-600: #2f8a80;
+  --color-brand-700: #93cec4;
+  --color-brand-800: #b9e0d9;
+  --color-brand-900: #dcefec;
+  --color-brand-950: #06201e;
+
+  --color-good-50: #0f2418;
+  --color-good-300: #8fd0a2;
+  --color-good-500: #3f9c5c;
+  --color-good-700: #9ad7ac;
+
+  --color-caution-50: #2a2110;
+  --color-caution-300: #e8c982;
+  --color-caution-500: #c08d22;
+  --color-caution-700: #ecc985;
+
+  --color-problem-50: #2b1512;
+  --color-problem-300: #e59f94;
+  --color-problem-500: #c9503f;
+  --color-problem-700: #eda598;
+
+  --color-accent-300: #b3c0e8;
+  --color-accent-500: #7c8fd0;
+  --color-accent-700: #b3c0e8;
+
+  /*
+   * The filled button turns inside out: a pale teal with near-black on it.
+   *
+   * The light theme's dark-teal fill with white text only reaches about 3.4:1
+   * against a dark page, which is below what button text needs. Inverting the
+   * pair puts it above 10:1 and is the ordinary way accent buttons behave in a
+   * dark interface.
+   */
+  --color-accent-solid: #8fcbc1;
+  --color-accent-solid-hover: #a7d8cf;
+  --color-accent-solid-active: #bde3dc;
+  --color-on-accent: #07211f;
+
+  /* Shadows carry almost nothing on a dark ground; depth comes from the
+     hairline instead, so they are pulled back rather than left shouting. */
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.35);
+  --shadow-lift: 0 8px 20px -8px rgb(0 0 0 / 0.6), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+
+  color-scheme: dark;
+}
+
+/* --------------------------------------------------------------------------
+ * Keyframes
+ * ------------------------------------------------------------------------ */
+
+/*
+ * The signal indicator on a live session. A ring expands and fades outward,
+ * which reads as transmission rather than as decoration.
+ */
+@keyframes live-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgb(71 156 146 / 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 9px rgb(71 156 146 / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(71 156 146 / 0);
+  }
+}
+
+/*
+ * Held positions only. The rate is deliberately close to a calm breath, and
+ * the animation is REMOVED - not merely paused - the moment alignment is lost,
+ * so the stillness itself becomes the feedback.
+ */
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.92;
+  }
+  50% {
+    transform: scale(1.035);
+    opacity: 1;
+  }
+}
+
+/*
+ * A repetition completing. Slight overshoot, then settle - the shape a limb
+ * makes arriving at the end of its range.
+ */
+@keyframes rep-land {
+  0% {
+    transform: scale(1);
+  }
+  38% {
+    transform: scale(1.13);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* One tally mark filling as its repetition is credited. */
+@keyframes tick-in {
+  from {
+    transform: scaleY(0.35);
+    opacity: 0.2;
+  }
+}
+
+/*
+ * A summary figure's rule drawing itself in.
+ *
+ * There is deliberately no `to` step: the animation finishes at whatever width
+ * the element's own style sets, so the bar can never animate past the value
+ * the data supports, and with motion reduced it simply appears at full length.
+ */
+@keyframes meter-grow {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+/* Content arriving on a screen that has just been opened. */
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+/* A new route taking the place of the last one. */
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+/*
+ * A corrective cue replacing another one. Small enough not to distract a
+ * patient mid-repetition, large enough that a changed instruction is noticed
+ * from across a room.
+ */
+@keyframes cue-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/*
+ * Loading. A directional sweep implies content flowing in; the pulse it
+ * replaces implied something was broken and retrying.
+ */
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* SVG stroke drawing - the progress chart line and the completion tick. */
+@keyframes draw-stroke {
+  from {
+    stroke-dashoffset: var(--draw-length, 1000);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * Base
+ * ------------------------------------------------------------------------ */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-canvas);
+  color: var(--color-ink-900);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* The palette swap is a deliberate act, so it is shown happening rather than
+     cutting. Long enough to read as one change, short enough not to be a wait. */
+  transition:
+    background-color 260ms var(--ease-settle),
+    color 260ms var(--ease-settle);
+}
+
+/*
+ * Display type: narrower and tighter than body text.
+ *
+ * `font-stretch` drives Archivo's width axis. Where the webfont has not
+ * arrived the declaration is simply ignored and headings fall back to the
+ * platform face at normal width, which is why weight and tracking are doing
+ * part of the work too.
+ */
+.type-display {
+  font-family: var(--font-display);
+  font-stretch: 92%;
+  letter-spacing: -0.02em;
+  font-weight: 620;
+}
+
+/*
+ * Measured values.
+ *
+ * Every number in this application is compared against another number - a
+ * count against a target, an angle against a threshold, this week's score
+ * against last week's. Tabular figures hold the digits in fixed columns so the
+ * comparison survives a glance, and slightly open tracking keeps a large
+ * readout legible from across a room, which is where the patient is standing.
+ */
+.type-measure {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.005em;
+}
+
+/* --------------------------------------------------------------------------
+ * Motion utilities
+ * ------------------------------------------------------------------------ */
+
+/*
+ * Two entrance mechanisms, for two different questions.
+ *
+ * `.reveal` is a MOUNT entrance: the screen has just been opened and its parts
+ * arrive in order. It is used on the session screens, which fill the viewport
+ * and are never scrolled through.
+ *
+ * `[data-reveal]` is a SCROLL entrance, driven by the Reveal component: a
+ * section arrives as the reader reaches it. It uses a transition rather than
+ * an animation so that, once shown, the element simply stays shown - scrolling
+ * back up to re-read something must never hide it again.
+ *
+ * Both read their position in the sequence from `--reveal-index`, so a page
+ * describes the order and this file owns the timing.
+ */
+.reveal {
+  animation: reveal var(--dur-slow) var(--ease-settle) backwards;
+  animation-delay: calc(var(--reveal-index, 0) * 65ms);
+}
+
+[data-reveal] {
+  transition:
+    opacity var(--dur-slow) var(--ease-settle),
+    transform var(--dur-slow) var(--ease-settle);
+  transition-delay: calc(var(--reveal-index, 0) * 70ms);
+}
+
+[data-reveal='hidden'] {
+  opacity: 0;
+  transform: translateY(14px);
+}
+
+[data-reveal='shown'] {
+  opacity: 1;
+  transform: none;
+}
+
+/* Each navigation replays one short entrance, so a route change is visibly a
+   change rather than a redraw. */
+.page-enter {
+  animation: page-in 400ms var(--ease-settle) backwards;
+}
+
+/*
+ * Rows a pointer can act on. Deliberately NOT applied to every card: a lift on
+ * something that cannot be clicked is a promise the interface does not keep.
+ */
+.row-interactive {
+  transition:
+    background-color var(--dur-fast) var(--ease-settle),
+    box-shadow var(--dur-fast) var(--ease-settle),
+    transform var(--dur-fast) var(--ease-settle);
+}
+
+.row-interactive:hover {
+  background-color: var(--color-sunken);
+}
+
+.row-interactive:active {
+  transform: translateY(1px);
+}
+
+/*
+ * The chevron on an actionable row.
+ *
+ * Dim until the row is under a pointer or a focus ring, then it moves the way
+ * the row is about to take you. It is the difference between a list that shows
+ * data and a list that says it can be opened.
+ */
+.row-arrow {
+  opacity: 0.3;
+  transition:
+    transform var(--dur-base) var(--ease-settle),
+    opacity var(--dur-base) var(--ease-settle);
+}
+
+.row-interactive:hover .row-arrow,
+.row-interactive:focus-visible .row-arrow {
+  opacity: 1;
+  transform: translateX(3px);
+}
+
+/*
+ * A surface that rises to meet the pointer, and settles back under a press.
+ * Reserved for whole cards that are themselves a single action.
+ */
+.lift {
+  transition:
+    transform var(--dur-base) var(--ease-settle),
+    box-shadow var(--dur-base) var(--ease-settle),
+    border-color var(--dur-base) var(--ease-settle);
+}
+
+.lift:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lift);
+}
+
+.lift:active {
+  transform: translateY(0);
+  transition-duration: var(--dur-fast);
+}
+
+/*
+ * Underline drawn on approach rather than printed permanently.
+ *
+ * Applied to inline links inside body copy, where a permanent underline on
+ * every one turns a paragraph into a fence. The link still carries a colour
+ * and a weight difference at rest, so it is never identified by hover alone.
+ */
+.link-underline {
+  position: relative;
+}
+
+.link-underline::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  bottom: -2px;
+  height: 1.5px;
+  background-color: currentColor;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dur-base) var(--ease-settle);
+}
+
+.link-underline:hover::after,
+.link-underline:focus-visible::after {
+  transform: scaleX(1);
+}
+
+/*
+ * A field that acknowledges being typed in.
+ *
+ * The label takes the brand colour while its input holds focus, so on a form
+ * with several fields it is always obvious which one the keyboard is pointed
+ * at - useful on a phone, where the on-screen keyboard hides half the form.
+ */
+.field:focus-within .field-label {
+  color: var(--color-brand-700);
+}
+
+.field-label {
+  transition: color var(--dur-fast) var(--ease-settle);
+}
+
+/* The loading sweep referenced by Skeleton. */
+.shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-ink-200) 0%,
+    var(--color-ink-100) 45%,
+    var(--color-ink-200) 90%
+  );
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+}
+
+/* Dark variant, for skeletons sitting on the session console. */
+.shimmer-dark {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-ink-800) 0%,
+    var(--color-ink-700) 45%,
+    var(--color-ink-800) 90%
+  );
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+}
+
+/*
+ * SVG paths that draw themselves in. The path length is passed as
+ * --draw-length by whichever component owns the geometry.
+ */
+.draw-in {
+  stroke-dasharray: var(--draw-length, 1000);
+  animation: draw-stroke var(--draw-duration, 1200ms) var(--ease-settle)
+    var(--draw-delay, 0ms) backwards;
+}
+
+/* --------------------------------------------------------------------------
+ * Accessibility
+ * ------------------------------------------------------------------------ */
+
+/* Visible focus for keyboard users - never removed. */
+:focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* On the dark console the mid brand teal is not bright enough against ink-950. */
+.console :focus-visible {
+  outline-color: var(--color-brand-300);
+}
+
+/*
+ * Reduced motion.
+ *
+ * Delays are zeroed alongside durations. Collapsing only the duration would
+ * leave a staggered entrance invisible for the length of its delay - the
+ * animation would be instant, but the wait in front of it would not be.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Screen-reader-only utility for live-region announcements. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/*
+ * Suppress the browser's own password reveal control.
+ *
+ * Edge and IE inject `::-ms-reveal` inside password inputs while Chrome and
+ * Firefox inject nothing, so the reveal button appeared on some fields, in
+ * some browsers, and vanished on re-render. PasswordInput supplies one control
+ * that behaves the same everywhere; leaving the native one visible would show
+ * two icons side by side in Edge.
+ */
+input[type='password']::-ms-reveal,
+input[type='password']::-ms-clear {
+  display: none;
+}
+
+/*
+ * Recharts puts a focus rectangle around its surface on click. The chart is
+ * not an interactive control, and the outline reads as an error state.
+ */
+.recharts-wrapper:focus,
+.recharts-surface:focus {
+  outline: none;
+}
+
+/* --------------------------------------------------------------------------
+ * Brand mark
+ * ------------------------------------------------------------------------ */
+
+/*
+ * The goniometer's moving arm opens when the mark is hovered or focused.
+ * Articulating is the only thing the instrument does, so it is the only thing
+ * the mark does - one small answer to a pointer, not an idle loop.
+ */
+.mark-arm {
+  transform-box: view-box;
+  transform-origin: 6px 18px;
+  transition: transform var(--dur-base) var(--ease-limb);
+}
+
+.brand-link:hover .mark-arm,
+.brand-link:focus-visible .mark-arm {
+  transform: rotate(-15deg);
+}
+
+/* --------------------------------------------------------------------------
+ * Sign-in pose figure
+ * ------------------------------------------------------------------------ */
+
+/*
+ * The one piece of motion in Movera that nobody triggered.
+ *
+ * It earns the exception by being the product rather than a decoration of it:
+ * a figure performing a shoulder abduction - a real exercise in the library -
+ * drawn with the same joints, the same teal and the same line weights as the
+ * skeleton the camera puts over a patient during a session. Someone who has
+ * never signed in can see what the application does, and someone who has will
+ * recognise the view they are about to be in.
+ *
+ * Rotation happens about the joint above each segment, which is how a limb
+ * actually moves. The forearm carries a different easing curve from the upper
+ * arm, so it lags very slightly on the way up and catches up at the top - the
+ * cheapest possible approximation of a real arm, and the difference between a
+ * figure that moves and a figure that swings like a gate.
+ */
+.limb {
+  transform-box: view-box;
+}
+
+.arm-upper-left {
+  transform-origin: 74px 78px;
+  animation: abduct-left 7s var(--ease-limb) infinite alternate;
+}
+
+.arm-upper-right {
+  transform-origin: 126px 78px;
+  animation: abduct-right 7s var(--ease-limb) infinite alternate;
+}
+
+.arm-fore-left {
+  transform-origin: 68px 116px;
+  animation: forearm-left 7s ease-in-out infinite alternate;
+}
+
+.arm-fore-right {
+  transform-origin: 132px 116px;
+  animation: forearm-right 7s ease-in-out infinite alternate;
+}
+
+@keyframes abduct-left {
+  from {
+    transform: rotate(4deg);
+  }
+  to {
+    transform: rotate(152deg);
+  }
+}
+
+@keyframes abduct-right {
+  from {
+    transform: rotate(-4deg);
+  }
+  to {
+    transform: rotate(-152deg);
+  }
+}
+
+@keyframes forearm-left {
+  from {
+    transform: rotate(-9deg);
+  }
+  to {
+    transform: rotate(14deg);
+  }
+}
+
+@keyframes forearm-right {
+  from {
+    transform: rotate(9deg);
+  }
+  to {
+    transform: rotate(-14deg);
+  }
+}
