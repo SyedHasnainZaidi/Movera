@@ -1,0 +1,211 @@
+# ---------------------------------------------------------------------------
+# PRODUCTION stack for a single AWS EC2 instance.
+#
+#   cp .env.production.example .env
+#   # fill it in, then:
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Standalone, not an overlay on docker-compose.yml. A `-f base -f override`
+# pair cannot remove a service, and running the wrong combination on a server
+# is exactly the mistake worth designing out - so this file is the whole
+# deployment and is applied on its own.
+#
+# What is different from the local stack
+# --------------------------------------
+#   * No frontend. It is built and served by Vercel.
+#   * No application port reaches the host. Caddy is the only thing listening
+#     on the instance, on 80 and 443; postgres, the backend and the pose
+#     service are reachable only over the compose network.
+#   * TLS is terminated by Caddy with certificates it obtains and renews from
+#     Let's Encrypt. This is not optional: the frontend is served from Vercel
+#     over HTTPS, and a browser on an HTTPS page refuses to call http:// or
+#     open ws:// at all. Without TLS here the deployed app cannot work.
+#   * The refresh cookie is cross-site (Vercel domain -> EC2 domain), so
+#     COOKIE_SECURE=true is required, which in turn requires TRUST_PROXY=true.
+#
+# Security-group requirements on the instance:
+#   inbound  80/tcp and 443/tcp from 0.0.0.0/0   (Caddy + ACME HTTP challenge)
+#   inbound  22/tcp from your address only
+#   nothing else - and in particular NOT 5432.
+# ---------------------------------------------------------------------------
+
+name: movera
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: '10m'
+      max-file: '3'
+
+services:
+  # ---------------------------------------------------------------------------
+  # Reverse proxy and TLS terminator. The only service bound to the host.
+  #
+  # Routing is deliberate rather than incidental: only /ws/session reaches the
+  # pose service. Its /analyze endpoint runs full pose inference on any image
+  # posted to it and has no authentication - it is a debug route. Keeping it
+  # off the public hostname means an unauthenticated stranger cannot spend the
+  # instance's CPU. (The application also refuses to mount it when
+  # POSE_ENVIRONMENT=production; this is the second of the two locks.)
+  # ---------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    <<: *logging
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN in .env - the DNS name pointing at this instance}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env - address for certificate expiry notices}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and ACME account keys. Losing this volume means
+      # re-issuing on next start, which Let's Encrypt rate-limits.
+      - caddy_data:/data
+      - caddy_config:/config
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    <<: *logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-physio}
+    # No `ports:` at all. The database is reachable from the other containers
+    # over the compose network and from nowhere else. To run psql against it,
+    # open a shell on the instance:
+    #   docker compose -f docker-compose.prod.yml exec postgres \
+    #     psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-physio}']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    restart: unless-stopped
+    <<: *logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      LOG_LEVEL: ${LOG_LEVEL:-log}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-physio}?schema=public
+
+      # The Vercel origin. Comma-separated if you also serve a preview domain.
+      # Must be the exact scheme + host, no trailing slash, or CORS rejects it.
+      FRONTEND_URL: ${FRONTEND_URL:?set FRONTEND_URL in .env - the Vercel origin}
+      # Links inside verification and password-reset emails. Defaults to the
+      # first FRONTEND_URL entry, which is what you want here.
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-}
+
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set JWT_ACCESS_SECRET in .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET in .env}
+      JWT_ACCESS_EXPIRES_IN: ${JWT_ACCESS_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+
+      POSE_TICKET_SECRET: ${POSE_TICKET_SECRET:?set POSE_TICKET_SECRET in .env}
+      POSE_SERVICE_TOKEN: ${POSE_SERVICE_TOKEN:?set POSE_SERVICE_TOKEN in .env}
+      POSE_SERVICE_URL: http://pose-service:8000
+
+      # Both are required, and required together. Caddy terminates TLS, so
+      # Express only ever sees a plain HTTP connection: without TRUST_PROXY it
+      # believes the request was insecure and silently declines to set a
+      # Secure cookie, and the rate limiter buckets every visitor on the
+      # proxy's single address.
+      TRUST_PROXY: 'true'
+      # Drives `SameSite=None; Secure` on the refresh cookie, which is what a
+      # Vercel-hosted frontend on a different domain requires. Left false, sign
+      # in appears to succeed and the session is gone on the next reload.
+      COOKIE_SECURE: 'true'
+
+      SMTP_HOST: ${SMTP_HOST:?set SMTP_HOST in .env - the backend will not start without it}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:?set SMTP_USER in .env}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?set SMTP_PASSWORD in .env}
+      SMTP_FROM: ${SMTP_FROM:-}
+
+      THROTTLE_TTL_SECONDS: ${THROTTLE_TTL_SECONDS:-60}
+      THROTTLE_LIMIT: ${THROTTLE_LIMIT:-120}
+    # No published ports: Caddy reaches it over the compose network.
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:3000/api/v1/health']
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  pose-service:
+    build:
+      context: ./services/pose-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    <<: *logging
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      POSE_ENVIRONMENT: production
+      POSE_SERVICE_PORT: '8000'
+      POSE_LOG_LEVEL: ${POSE_LOG_LEVEL:-INFO}
+
+      POSE_TICKET_SECRET: ${POSE_TICKET_SECRET:?set POSE_TICKET_SECRET in .env}
+      POSE_SERVICE_TOKEN: ${POSE_SERVICE_TOKEN:?set POSE_SERVICE_TOKEN in .env}
+      BACKEND_INTERNAL_URL: http://backend:3000
+      # The browser's Origin header on the WebSocket upgrade. CORS middleware
+      # does not cover WebSocket handshakes, so the service checks this itself.
+      ALLOWED_ORIGINS: ${FRONTEND_URL:?set FRONTEND_URL in .env}
+
+      POSE_MODEL_PATH: app/pose/model/yolov8n-pose.pt
+      POSE_NUM_POSES: '2'
+      LANDMARK_VISIBILITY_THRESHOLD: '0.5'
+      # Far lower than the local default of 8. One YOLOv8n frame costs roughly
+      # 140 ms of CPU, so a 2-vCPU instance sustains about 7 fps in total
+      # across all sessions. Three concurrent patients at the frontend's 7 fps
+      # already oversubscribes it; more would just queue frames that
+      # backpressure then drops.
+      POSE_MAX_CONCURRENT_SESSIONS: ${POSE_MAX_CONCURRENT_SESSIONS:-3}
+      POSE_MAX_SESSION_MINUTES: ${POSE_MAX_SESSION_MINUTES:-120}
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:8000/ready']
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      # torch and the model take a while to load on a burstable instance.
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

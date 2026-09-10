@@ -1,0 +1,58 @@
+# ---------------------------------------------------------------------------
+# Public edge for the EC2 deployment.
+#
+# One hostname fronts both services. Caddy obtains and renews a Let's Encrypt
+# certificate for it automatically on first start, which is the whole reason
+# it is here: the frontend is served by Vercel over HTTPS, and a browser on an
+# HTTPS page will not call http:// or open ws://.
+#
+# API_DOMAIN and ACME_EMAIL come from the environment - see
+# docker-compose.prod.yml.
+#
+# Frontend configuration that matches this file:
+#   VITE_API_URL      = https://$API_DOMAIN/api/v1
+#   VITE_POSE_WS_URL  = wss://$API_DOMAIN/ws/session
+# ---------------------------------------------------------------------------
+
+{
+	email {$ACME_EMAIL}
+	# Uncomment while testing to use the staging CA. Let's Encrypt rate-limits
+	# failed issuance on the production endpoint hard, and a wrong DNS record
+	# can burn the weekly allowance in an afternoon.
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	# --- pose service ------------------------------------------------------
+	# Only this one path. Everything else the pose service exposes - /analyze,
+	# /docs, /benchmark - stays on the compose network, unreachable from
+	# outside. /analyze in particular runs YOLO inference on an
+	# attacker-supplied image with no authentication.
+	#
+	# reverse_proxy upgrades WebSocket connections without extra configuration.
+	# No proxy timeouts are configured here on purpose. Caddy applies no read
+	# or write deadline by default and does not impose one on a hijacked
+	# WebSocket connection, which is what a rehabilitation session running to
+	# POSE_MAX_SESSION_MINUTES needs. Adding timeouts to `transport http` would
+	# be the wrong place for it anyway - those subdirectives govern the HTTP
+	# round trip, not the upgraded socket.
+	@pose path /ws/session*
+	handle @pose {
+		reverse_proxy pose-service:8000
+	}
+
+	# --- application API ---------------------------------------------------
+	handle {
+		reverse_proxy backend:3000
+	}
+
+	# Caddy sets X-Forwarded-For and X-Forwarded-Proto by default; the backend
+	# reads them only because TRUST_PROXY=true is set for it in compose.
+
+	log {
+		output stdout
+		format console
+	}
+}

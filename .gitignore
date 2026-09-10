@@ -9,11 +9,13 @@ coverage/
 .vite/
 
 # ---------- Environment ----------
-# .env.example files MUST stay tracked - they are documentation.
+# *.example files MUST stay tracked - they are documentation. The pattern is
+# `.env*.example` rather than `.env.example` so that .env.production.example
+# survives `.env.*` above too.
 .env
 .env.*
-!.env.example
-!**/.env.example
+!.env*.example
+!**/.env*.example
 
 # ---------- Python ----------
 .venv/

@@ -1,0 +1,35 @@
+# ---------------------------------------------------------------------------
+# Build context for services/pose-service/Dockerfile.
+#
+# The virtualenv is the important entry: with torch installed it is several
+# gigabytes, and shipping it to the daemon on every build dwarfs the build
+# itself. Dependencies are reinstalled inside the image from requirements.txt.
+#
+# NOTE: app/pose/model/*.pt is deliberately NOT excluded. The weights are
+# committed (6.8 MB), and having them in the context turns the download step
+# in the Dockerfile into a checksum verification instead of a network fetch -
+# which is what makes the image buildable on a machine with no route to the
+# ultralytics release assets.
+# ---------------------------------------------------------------------------
+
+.venv
+venv
+env
+
+__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Secrets. .env.example is documentation and is not matched here.
+.env
+.env.local
+
+# Tests are not run inside the runtime image.
+tests
+
+.git
+.gitignore
+*.log

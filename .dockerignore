@@ -1,0 +1,87 @@
+# ---------------------------------------------------------------------------
+# Build context for the images built from the REPOSITORY ROOT:
+#   apps/backend/Dockerfile
+#   apps/frontend/Dockerfile
+#
+# Without this file the daemon receives the entire working tree on every
+# build - which here means node_modules, a multi-gigabyte Python virtualenv
+# holding torch, a live PostgreSQL data directory, and the .env files with the
+# real signing secrets in them. Two of those are slow; the last one is a leak,
+# because `COPY apps/backend apps/backend` in the backend build stage would
+# otherwise place apps/backend/.env inside an image layer.
+#
+# Everything listed here is either reproduced inside the image from a lockfile
+# or has no business in one.
+# ---------------------------------------------------------------------------
+
+# --- version control -------------------------------------------------------
+.git
+.gitattributes
+.gitignore
+
+# --- dependencies ----------------------------------------------------------
+# Reinstalled inside the image from package-lock.json, so the host copy is
+# both redundant and wrong (it may hold platform-specific binaries built for
+# Windows).
+node_modules
+**/node_modules
+
+# The pose service's virtualenv. Several gigabytes once torch is in it, and
+# no Node build has any use for it.
+services/pose-service/.venv
+
+# --- build output ----------------------------------------------------------
+**/dist
+**/build
+**/coverage
+**/*.tsbuildinfo
+**/.vite
+**/.eslintcache
+
+# --- secrets ---------------------------------------------------------------
+# .env.example files are documentation and are NOT matched by these patterns,
+# so they still reach the context.
+.env
+**/.env
+**/.env.local
+**/.env.development
+**/.env.production
+
+# --- local database artefacts ---------------------------------------------
+# .pgdata is a live PostgreSQL cluster created by the embedded-postgres
+# fallback; .pgdump holds real row data and role passwords.
+apps/backend/.pgdata
+apps/backend/.pgdump
+**/pgdata
+
+# --- Python bytecode / caches ---------------------------------------------
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+
+# --- superseded prototypes -------------------------------------------------
+# Kept in the repository as submitted coursework; not part of any image.
+legacy
+FYP
+
+# --- not needed at build time ---------------------------------------------
+docs
+tools
+docker-compose.yml
+docker-compose.prod.yml
+Caddyfile
+*.bat
+
+# --- editor / OS -----------------------------------------------------------
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+desktop.ini
+**/*.swp
+
+# --- logs ------------------------------------------------------------------
+logs
+**/*.log

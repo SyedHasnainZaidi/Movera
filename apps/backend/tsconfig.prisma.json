@@ -1,0 +1,36 @@
+{
+  // ---------------------------------------------------------------------------
+  // Compiles the database maintenance scripts that need to run INSIDE the
+  // production image.
+  //
+  // `nest build` deliberately excludes prisma/ (see tsconfig.build.json), and
+  // the npm scripts run these through ts-node - which is a devDependency, and
+  // therefore absent once the runtime image installs with --omit=dev. Without
+  // a compiled copy there is no way to populate the exercise library on a
+  // deployed instance, and an application with no exercises in it does nothing.
+  //
+  // prisma/seed.ts is EXCLUDED on purpose. It opens by deleting every session,
+  // report, assignment and exercise so it can rebuild a fixed demo dataset, and
+  // it creates accounts on a shared, publicly documented password. That script
+  // must not be one typo away from running against a real database, so it is
+  // not shipped at all. apply-exercise-library.ts is the production-safe path:
+  // it matches on slug, updates in place, versions rule configs, and deletes
+  // nothing.
+  // ---------------------------------------------------------------------------
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "prisma",
+    // NOT dist/prisma: that path is already the compiled output of
+    // src/prisma/ (the Nest PrismaModule and PrismaService), and merging two
+    // unrelated source trees into one output directory is a filename
+    // collision waiting to happen.
+    "outDir": "dist/tools",
+    "declaration": false,
+    "sourceMap": false,
+    // The main build owns .tsbuildinfo; a second incremental project writing
+    // beside it would clobber that state.
+    "incremental": false
+  },
+  "include": ["prisma/apply-exercise-library.ts", "prisma/seed-exercises.ts"],
+  "exclude": ["node_modules", "dist", "prisma/seed.ts"]
+}

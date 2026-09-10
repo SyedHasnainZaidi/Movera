@@ -135,7 +135,24 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health.router)
-    app.include_router(analyze.router)
+
+    # /analyze is a debug route: it takes an image, runs a full pose inference
+    # over it and returns the analysis, with no ticket and no authentication of
+    # any kind. That is fine on a developer machine and wrong on a public host,
+    # where it hands an anonymous caller a way to spend the instance's CPU at
+    # will - the single most expensive operation the service performs, on
+    # demand, unmetered.
+    #
+    # The deployment also keeps it off the public hostname at the reverse proxy
+    # (see Caddyfile). Two locks, because either one alone is one configuration
+    # mistake away from being the only one.
+    if not settings.is_production:
+        app.include_router(analyze.router)
+    else:
+        logging.getLogger(__name__).info(
+            "POSE_ENVIRONMENT=production: /analyze debug route not mounted"
+        )
+
     app.include_router(websocket_session.router)
 
     return app
