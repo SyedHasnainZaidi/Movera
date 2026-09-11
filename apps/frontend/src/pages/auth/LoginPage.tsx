@@ -16,28 +16,16 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-/** Seeded by `prisma:seed`. Kept in one place so the labels cannot drift. */
-const DEV_ACCOUNTS = [
-  { email: 'therapist@example.com', role: 'Physiotherapist' },
-  { email: 'patient1@example.com', role: 'Patient' },
-  { email: 'patient2@example.com', role: 'Patient' },
-] as const;
-
-const DEV_PASSWORD = 'DevPassword123!';
-
 export function LoginPage() {
   const navigate = useNavigate();
   const login = useAuthStore((state) => state.login);
   const [formError, setFormError] = useState<string | null>(null);
   /** Set when the backend refuses the login specifically for verification. */
   const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
-  /** Which seeded account is mid-flight, so only its own control shows a spinner. */
-  const [signingInAs, setSigningInAs] = useState<string | null>(null);
 
   const {
     register,
     handleSubmit,
-    setValue,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({ resolver: zodResolver(schema) });
 
@@ -61,28 +49,6 @@ export function LoginPage() {
   };
 
   const onSubmit = (values: FormValues) => signIn(values.email, values.password);
-
-  /**
-   * One tap to sign in as a seeded account.
-   *
-   * The credentials were already printed on this screen in full, so nothing is
-   * revealed that was not: what changes is that demonstrating the two roles
-   * side by side no longer means retyping an address and a password with a
-   * capital, a digit and a symbol in front of an audience.
-   *
-   * The form is filled as well as submitted, so if the request fails the
-   * fields hold what was tried.
-   */
-  const signInAsSeeded = async (email: string) => {
-    setValue('email', email);
-    setValue('password', DEV_PASSWORD);
-    setSigningInAs(email);
-    try {
-      await signIn(email, DEV_PASSWORD);
-    } finally {
-      setSigningInAs(null);
-    }
-  };
 
   return (
     <div>
@@ -151,7 +117,7 @@ export function LoginPage() {
           <Button
             type="submit"
             size="lg"
-            loading={isSubmitting && signingInAs === null}
+            loading={isSubmitting}
             className="w-full"
           >
             Sign in
@@ -169,64 +135,6 @@ export function LoginPage() {
             Create one
           </Link>
         </p>
-      </Rise>
-
-      {/*
-        Seed accounts for marking and demonstration. Set apart with a dashed
-        border rather than a filled panel so it reads as scaffolding attached
-        to the page, not as part of the sign-in form.
-      */}
-      <Rise index={5}>
-        <div className="mt-8 rounded-panel border border-dashed border-ink-300 p-4">
-          <p className="text-xs font-semibold text-ink-600">
-            Development accounts
-          </p>
-          <p className="mt-1 text-xs text-ink-500">
-            Password <code className="font-mono">{DEV_PASSWORD}</code> — or sign
-            in with one tap.
-          </p>
-
-          <ul className="mt-3 space-y-1.5">
-            {DEV_ACCOUNTS.map((account) => (
-              <li key={account.email}>
-                <button
-                  type="button"
-                  onClick={() => void signInAsSeeded(account.email)}
-                  disabled={signingInAs !== null}
-                  className="row-interactive flex w-full items-center gap-2 rounded-readout px-2 py-1.5 text-left disabled:opacity-60"
-                >
-                  <span className="min-w-0 flex-1 truncate text-xs text-ink-700">
-                    {account.email}
-                  </span>
-                  <span className="shrink-0 text-xs text-ink-500">
-                    {account.role}
-                  </span>
-                  {signingInAs === account.email ? (
-                    <span
-                      className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-brand-600 border-t-transparent"
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <svg
-                      viewBox="0 0 16 16"
-                      width="14"
-                      height="14"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                      className="row-arrow shrink-0 text-ink-500"
-                    >
-                      <path d="M6 3.5 L 10.5 8 L 6 12.5" />
-                    </svg>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
       </Rise>
     </div>
   );

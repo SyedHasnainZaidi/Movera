@@ -195,9 +195,9 @@ export const EXERCISE_SEEDS: ExerciseSeed[] = [
     category: 'Upper Body',
     difficulty: Difficulty.EASY,
     targetBodyArea: 'Elbow, upper arm',
-    recommendedView: CameraView.SIDE,
+    recommendedView: CameraView.FRONT,
     framingInstructions:
-      'Stand side-on to the camera, about 2 metres away, with your shoulder, elbow, wrist AND hip all in frame. Straighten your arm fully at the bottom of every repetition - the counter needs to see the arm reach full extension before it will count the next one.',
+      'Stand facing the camera, about 2 metres away, with your shoulder, elbow, wrist AND hip all in frame. Straighten your arm fully at the bottom of every repetition - the counter needs to see the arm reach full extension before it will count the next one.',
     defaultSets: 3,
     defaultReps: 12,
     isActive: true,
