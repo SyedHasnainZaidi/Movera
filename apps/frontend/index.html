@@ -7,6 +7,23 @@
     <meta name="theme-color" content="#f5f8f7" />
 
     <!--
+      Tab icon: the goniometer mark, the same drawing as <MoveraMark> in the
+      navigation bar.
+
+      SVG first, because it stays crisp on every display and at every size a
+      browser asks for. The 32px PNG is the fallback for browsers that do not
+      take an SVG icon; declaring it after the SVG means anything modern uses
+      the vector and ignores it.
+
+      The mark carries its own teal tile rather than being a bare glyph, so it
+      stays legible against both a light and a dark browser chrome without a
+      second themed asset.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!--
       Theme, resolved before the first paint.
 
       This has to run here rather than in React. The bundle is fetched, parsed

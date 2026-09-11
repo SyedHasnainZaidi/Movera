@@ -1,4 +1,4 @@
-import { INestApplication, ValidationPipe, VersioningType } from '@nestjs/common';
+﻿import { INestApplication, ValidationPipe, VersioningType } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import cookieParser from 'cookie-parser';
 import { createHash, randomBytes } from 'node:crypto';
@@ -32,6 +32,8 @@ describe('Physiotherapy platform (e2e)', () => {
   let patientBToken: string;
   let patientAProfileId: string;
   let patientBProfileId: string;
+  /** Every assignment must belong to a plan, so patient A gets one up front. */
+  let planId: string;
   let assignmentId: string;
 
   const unique = (prefix: string) =>
@@ -155,11 +157,24 @@ describe('Physiotherapy platform (e2e)', () => {
       (e: { slug: string }) => e.slug === 'squat',
     );
 
+    const plan = await request(server)
+      .post('/api/v1/rehabilitation-plans')
+      .set('Authorization', `Bearer ${therapistToken}`)
+      .send({
+        patientId: patientAProfileId,
+        title: 'E2E Rehabilitation Plan',
+        goals: 'Restore range of motion and rebuild strength after surgery.',
+        startDate: new Date().toISOString().slice(0, 10),
+      })
+      .expect(201);
+    planId = plan.body.id;
+
     const assignment = await request(server)
       .post('/api/v1/assignments')
       .set('Authorization', `Bearer ${therapistToken}`)
       .send({
         patientId: patientAProfileId,
+        planId,
         exerciseId: squat.id,
         targetSets: 2,
         repsPerSet: 5,
@@ -703,6 +718,10 @@ describe('Physiotherapy platform (e2e)', () => {
         .set('Authorization', `Bearer ${therapistToken}`)
         .send({
           patientId: patientBProfileId,
+          // Patient A's plan, deliberately: the link check runs before the
+          // plan check, so this still fails on the link rather than on the
+          // plan belonging to someone else.
+          planId,
           exerciseId: squat.id,
           targetSets: 3,
           repsPerSet: 10,
@@ -801,8 +820,66 @@ describe('Physiotherapy platform (e2e)', () => {
       sessionId = response.body.id;
     });
 
-    it('refuses a second concurrent session', async () => {
+    /**
+     * Returning to the SAME exercise resumes rather than conflicts.
+     *
+     * This is the behaviour that stops a patient being locked out of their own
+     * session. A backgrounded tab that the browser discards, a reload or a
+     * dropped socket all end with the page asking for a session again, and the
+     * only correct answer is the one already running - creating a second would
+     * orphan the repetitions recorded against the first, and refusing left the
+     * patient stuck until the two-hour sweep with no control to clear it.
+     */
+    it('RESUMES the existing session when the same exercise is started again', async () => {
+      const first = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${patientAToken}`)
+        .send({ assignmentId })
+        .expect(201);
+      expect(first.body.resumed).toBe(false);
+
+      const second = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${patientAToken}`)
+        .send({ assignmentId })
+        .expect(201);
+
+      expect(second.body.id).toBe(first.body.id);
+      expect(second.body.resumed).toBe(true);
+      // The payload has to be usable as-is: the page mints a ticket and
+      // connects from it exactly as it would for a new session.
+      expect(second.body.targetTotalReps).toBe(first.body.targetTotalReps);
+      expect(second.body.exercise.slug).toBe(first.body.exercise.slug);
+
       await request(server)
+        .post(`/api/v1/sessions/${first.body.id}/cancel`)
+        .set('Authorization', `Bearer ${patientAToken}`)
+        .expect(200);
+    });
+
+    it('refuses a session on a DIFFERENT exercise, naming the one in the way', async () => {
+      const exercises = await request(server)
+        .get('/api/v1/exercises')
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .expect(200);
+      const curl = exercises.body.find(
+        (e: { slug: string }) => e.slug === 'bicep-curl',
+      );
+
+      const other = await request(server)
+        .post('/api/v1/assignments')
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .send({
+          patientId: patientAProfileId,
+          planId,
+          exerciseId: curl.id,
+          targetSets: 2,
+          repsPerSet: 5,
+          startDate: new Date().toISOString().slice(0, 10),
+        })
+        .expect(201);
+
+      const live = await request(server)
         .post('/api/v1/sessions')
         .set('Authorization', `Bearer ${patientAToken}`)
         .send({ assignmentId })
@@ -811,9 +888,137 @@ describe('Physiotherapy platform (e2e)', () => {
       const response = await request(server)
         .post('/api/v1/sessions')
         .set('Authorization', `Bearer ${patientAToken}`)
-        .send({ assignmentId })
+        .send({ assignmentId: other.body.id })
         .expect(409);
+
       expect(response.body.code).toBe('SESSION_ALREADY_LIVE');
+      // Without these the client cannot offer a way out, which is what left
+      // the patient at a dead end.
+      expect(response.body.details.sessionId).toBe(live.body.id);
+      expect(response.body.details.assignmentId).toBe(assignmentId);
+      expect(response.body.details.exerciseName).toBeTruthy();
+
+      // And cancelling the named session unblocks the other exercise.
+      await request(server)
+        .post(`/api/v1/sessions/${response.body.details.sessionId}/cancel`)
+        .set('Authorization', `Bearer ${patientAToken}`)
+        .expect(200);
+
+      const started = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${patientAToken}`)
+        .send({ assignmentId: other.body.id })
+        .expect(201);
+      expect(started.body.resumed).toBe(false);
+
+      await request(server)
+        .post(`/api/v1/sessions/${started.body.id}/cancel`)
+        .set('Authorization', `Bearer ${patientAToken}`)
+        .expect(200);
+    });
+
+    /**
+     * FINALIZING was the one status a patient could be trapped behind: it
+     * counts as live so it blocks the next session, it is excluded from
+     * resuming so it cannot be handed back, and cancel() refused it. A row
+     * that reached it and stopped was unreachable from every direction.
+     *
+     * `updatedAt` is aged with raw SQL because Prisma's @updatedAt rewrites it
+     * on every update - the row has to look stranded, not freshly touched.
+     *
+     * AT TIME ZONE 'UTC' is load-bearing. The column is timestamp WITHOUT time
+     * zone and Prisma stores UTC in it, but Postgres `now()` returns the
+     * server's local time - five hours ahead here - so a plain
+     * `now() - interval '5 minutes'` ages the row five hours into the FUTURE
+     * and the recovery never matches it. Passing a JS Date as a bound
+     * parameter fails the same way, for the same reason.
+     */
+    async function strandInFinalizing(sessionId: string): Promise<void> {
+      await prisma.$executeRawUnsafe(
+        `UPDATE exercise_sessions
+            SET status = 'FINALIZING',
+                "updatedAt" = (now() AT TIME ZONE 'UTC') - interval '5 minutes'
+          WHERE id = $1`,
+        sessionId,
+      );
+    }
+
+    it('finishes a session stranded in FINALIZING instead of blocking on it', async () => {
+      const live = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${patientAToken}`)
+        .send({ assignmentId })
+        .expect(201);
+      await strandInFinalizing(live.body.id);
+
+      // The patient simply starts their exercise again - no special call.
+      const next = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${patientAToken}`)
+        .send({ assignmentId })
+        .expect(201);
+      expect(next.body.id).not.toBe(live.body.id);
+
+      // COMPLETED, not FAILED: a session only reaches FINALIZING because the
+      // patient asked to complete it, so the work is finished rather than
+      // broken and a report is built from what was recorded.
+      const stranded = await prisma.exerciseSession.findUnique({
+        where: { id: live.body.id },
+      });
+      expect(stranded?.status).toBe('COMPLETED');
+      expect(
+        await prisma.sessionReport.findUnique({
+          where: { sessionId: live.body.id },
+        }),
+      ).not.toBeNull();
+
+      await request(server)
+        .post(`/api/v1/sessions/${next.body.id}/cancel`)
+        .set('Authorization', `Bearer ${patientAToken}`)
+        .expect(200);
+    });
+
+    it('lets a stranded FINALIZING session be cancelled', async () => {
+      const live = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${patientAToken}`)
+        .send({ assignmentId })
+        .expect(201);
+      await strandInFinalizing(live.body.id);
+
+      // The conflict screen offers "cancel it and start this one"; that
+      // control has to actually work on this status, not just be displayed.
+      const response = await request(server)
+        .post(`/api/v1/sessions/${live.body.id}/cancel`)
+        .set('Authorization', `Bearer ${patientAToken}`)
+        .expect(200);
+      expect(response.body.status).toBe('CANCELLED');
+    });
+
+    it('refuses to cancel a finalization that is genuinely in flight', async () => {
+      const live = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${patientAToken}`)
+        .send({ assignmentId })
+        .expect(201);
+      // FINALIZING with a fresh updatedAt - a completion happening right now.
+      await prisma.$executeRawUnsafe(
+        `UPDATE exercise_sessions SET status = 'FINALIZING' WHERE id = $1`,
+        live.body.id,
+      );
+
+      const response = await request(server)
+        .post(`/api/v1/sessions/${live.body.id}/cancel`)
+        .set('Authorization', `Bearer ${patientAToken}`)
+        .expect(400);
+      expect(response.body.code).toBe('SESSION_INVALID_STATE');
+
+      // Completing it is still the right way out, and still works: complete()
+      // accepts FINALIZING precisely so a retry can finish what was started.
+      await request(server)
+        .post(`/api/v1/sessions/${live.body.id}/complete`)
+        .set('Authorization', `Bearer ${patientAToken}`)
+        .expect(200);
     });
 
     it("refuses to start a session on another patient's assignment", async () => {
@@ -1301,11 +1506,23 @@ describe('Physiotherapy platform (e2e)', () => {
         ? exercises.body
         : exercises.body.data;
 
+      const ownPlan = await request(server)
+        .post('/api/v1/rehabilitation-plans')
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .send({
+          patientId: profileId,
+          title: 'Archive cycle plan',
+          goals: 'Verify that plans and their history survive an archive.',
+          startDate: new Date().toISOString().slice(0, 10),
+        })
+        .expect(201);
+
       const created = await request(server)
         .post('/api/v1/assignments')
         .set('Authorization', `Bearer ${therapistToken}`)
         .send({
           patientId: profileId,
+          planId: ownPlan.body.id,
           exerciseId: list[0].id,
           targetSets: 2,
           repsPerSet: 5,
@@ -1385,6 +1602,7 @@ describe('Physiotherapy platform (e2e)', () => {
         .set('Authorization', `Bearer ${therapistToken}`)
         .send({
           patientId: patientAProfileId,
+          planId,
           exerciseId: list[0].id,
           targetSets: 2,
           repsPerSet: 5,
@@ -1565,6 +1783,268 @@ describe('Physiotherapy platform (e2e)', () => {
     });
   });
 
+
+  // =====================================================================
+  describe('Plan lifecycle', () => {
+    /**
+     * A brand-new patient, linked to the therapist.
+     *
+     * Deliberately a fresh registration per call rather than a shared fixture:
+     * a patient may hold only one ACTIVE plan, so tests that each create a
+     * plan would collide on a reused patient.
+     */
+    async function freshLinkedPatient(): Promise<{
+      token: string;
+      profileId: string;
+    }> {
+      const patient = await registerUser('PATIENT');
+      const token = patient.body.accessToken;
+      const profileId = patient.body.user.patientProfileId;
+
+      const invite = await request(server)
+        .post('/api/v1/patients/me/link-invites')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      await request(server)
+        .post('/api/v1/therapists/me/patients/link')
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .send({ inviteCode: invite.body.code })
+        .expect(201);
+
+      return { token, profileId };
+    }
+
+    /** A freshly linked patient with an active plan of their own. */
+    async function patientWithPlan(): Promise<{
+      token: string;
+      profileId: string;
+      planId: string;
+      exerciseId: string;
+    }> {
+      const { token, profileId } = await freshLinkedPatient();
+
+      const plan = await request(server)
+        .post('/api/v1/rehabilitation-plans')
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .send({
+          patientId: profileId,
+          title: 'Plan lifecycle',
+          goals: 'Exercise the create, edit and remove paths end to end.',
+          startDate: new Date().toISOString().slice(0, 10),
+        })
+        .expect(201);
+
+      const exercises = await request(server)
+        .get('/api/v1/exercises')
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .expect(200);
+      const list = Array.isArray(exercises.body)
+        ? exercises.body
+        : exercises.body.data;
+
+      return {
+        token,
+        profileId,
+        planId: plan.body.id,
+        exerciseId: list[0].id,
+      };
+    }
+
+    async function assignTo(
+      profileId: string,
+      planIdForAssignment: string,
+      exerciseId: string,
+    ): Promise<string> {
+      const created = await request(server)
+        .post('/api/v1/assignments')
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .send({
+          patientId: profileId,
+          planId: planIdForAssignment,
+          exerciseId,
+          targetSets: 2,
+          repsPerSet: 5,
+          startDate: new Date().toISOString().slice(0, 10),
+        })
+        .expect(201);
+      return created.body.id;
+    }
+
+    it('requires a description when creating a plan', async () => {
+      const { profileId } = await freshLinkedPatient();
+      await request(server)
+        .post('/api/v1/rehabilitation-plans')
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .send({
+          patientId: profileId,
+          title: 'No description',
+          startDate: new Date().toISOString().slice(0, 10),
+        })
+        .expect(400);
+    });
+
+    it('refuses an exercise assignment with no plan', async () => {
+      const { profileId, exerciseId } = await patientWithPlan();
+      await request(server)
+        .post('/api/v1/assignments')
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .send({
+          patientId: profileId,
+          exerciseId,
+          targetSets: 2,
+          repsPerSet: 5,
+          startDate: new Date().toISOString().slice(0, 10),
+        })
+        .expect(400);
+    });
+
+    it('refuses an exercise assignment into a plan that is not active', async () => {
+      const { profileId, planId: ownPlan, exerciseId } = await patientWithPlan();
+
+      await request(server)
+        .patch(`/api/v1/rehabilitation-plans/${ownPlan}`)
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .send({ status: 'COMPLETED' })
+        .expect(200);
+
+      const response = await request(server)
+        .post('/api/v1/assignments')
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .send({
+          patientId: profileId,
+          planId: ownPlan,
+          exerciseId,
+          targetSets: 2,
+          repsPerSet: 5,
+          startDate: new Date().toISOString().slice(0, 10),
+        })
+        .expect(400);
+      expect(response.body.code).toBe('PLAN_NOT_ACTIVE');
+    });
+
+    it('edits a plan title and description', async () => {
+      const { planId: ownPlan } = await patientWithPlan();
+
+      const response = await request(server)
+        .patch(`/api/v1/rehabilitation-plans/${ownPlan}`)
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .send({
+          title: 'Revised plan title',
+          goals: 'Revised goals after the four-week review appointment.',
+        })
+        .expect(200);
+
+      expect(response.body.title).toBe('Revised plan title');
+      expect(response.body.goals).toContain('four-week review');
+    });
+
+    it('DELETES a plan and its assignments when nothing has been recorded', async () => {
+      const { profileId, planId: ownPlan, exerciseId } = await patientWithPlan();
+      const assignment = await assignTo(profileId, ownPlan, exerciseId);
+
+      const response = await request(server)
+        .delete(`/api/v1/rehabilitation-plans/${ownPlan}`)
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .expect(200);
+
+      expect(response.body.deleted).toBe(true);
+
+      // Both genuinely gone - and the assignment is not left orphaned with a
+      // null planId, which is the state the new rule exists to prevent.
+      expect(
+        await prisma.rehabilitationPlan.findUnique({ where: { id: ownPlan } }),
+      ).toBeNull();
+      expect(
+        await prisma.exerciseAssignment.findUnique({
+          where: { id: assignment },
+        }),
+      ).toBeNull();
+    });
+
+    it('ARCHIVES a plan that has recorded sessions, keeping the history', async () => {
+      const {
+        token,
+        profileId,
+        planId: ownPlan,
+        exerciseId,
+      } = await patientWithPlan();
+      const assignment = await assignTo(profileId, ownPlan, exerciseId);
+
+      const session = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ assignmentId: assignment })
+        .expect(201);
+      await request(server)
+        .post(`/api/v1/sessions/${session.body.id}/cancel`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const response = await request(server)
+        .delete(`/api/v1/rehabilitation-plans/${ownPlan}`)
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .expect(200);
+
+      expect(response.body.deleted).toBe(false);
+      expect(response.body.status).toBe('CANCELLED');
+
+      // The plan and its assignment survive, cancelled; the session survives
+      // untouched. Losing a completed session to a tidy-up is the one outcome
+      // this path must never produce.
+      expect(
+        (await prisma.rehabilitationPlan.findUnique({ where: { id: ownPlan } }))
+          ?.status,
+      ).toBe('CANCELLED');
+      expect(
+        (
+          await prisma.exerciseAssignment.findUnique({
+            where: { id: assignment },
+          })
+        )?.status,
+      ).toBe('CANCELLED');
+      expect(
+        await prisma.exerciseSession.findUnique({
+          where: { id: session.body.id },
+        }),
+      ).not.toBeNull();
+    });
+
+    it('refuses to remove a plan while a session on it is live', async () => {
+      const {
+        token,
+        profileId,
+        planId: ownPlan,
+        exerciseId,
+      } = await patientWithPlan();
+      const assignment = await assignTo(profileId, ownPlan, exerciseId);
+
+      const session = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ assignmentId: assignment })
+        .expect(201);
+
+      const response = await request(server)
+        .delete(`/api/v1/rehabilitation-plans/${ownPlan}`)
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .expect(409);
+      expect(response.body.code).toBe('SESSION_ALREADY_LIVE');
+
+      await request(server)
+        .post(`/api/v1/sessions/${session.body.id}/cancel`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+    });
+
+    it('stops a patient removing their own plan', async () => {
+      const { token, planId: ownPlan } = await patientWithPlan();
+      await request(server)
+        .delete(`/api/v1/rehabilitation-plans/${ownPlan}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(403);
+    });
+  });
   describe('Input validation', () => {
     it('rejects unknown properties instead of silently ignoring them', async () => {
       await request(server)
@@ -1587,6 +2067,7 @@ describe('Physiotherapy platform (e2e)', () => {
         .set('Authorization', `Bearer ${therapistToken}`)
         .send({
           patientId: patientAProfileId,
+          planId,
           exerciseId: squat.id,
           targetSets: 0,
           repsPerSet: 500,

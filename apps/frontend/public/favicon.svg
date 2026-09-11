@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Movera">
+  <!--
+    The Movera mark: a goniometer, the hinged degree-marked protractor a
+    physiotherapist holds against a joint.
+
+    The same drawing as <MoveraMark> in src/components/MoveraLogo.tsx - pivot,
+    fixed arm, moving arm, arc - on the brand-600 tile that component uses. The
+    glyph paths are kept in their original 24x24 coordinate space via a nested
+    <svg> so the two cannot drift apart: a change to the component's paths can
+    be pasted straight in here.
+
+    Two deliberate differences from the component, both for legibility at
+    16px: the stroke is a little heavier, and the arc sits at 0.7 rather than
+    0.55 opacity, below which it disappears entirely in a browser tab.
+
+    The tile carries its own background, so this reads correctly against both
+    a light and a dark browser chrome without a second themed asset.
+  -->
+  <rect width="64" height="64" rx="14" fill="#1c6660"/>
+  <svg x="11.5" y="9.5" width="42" height="42" viewBox="0 0 24 24"
+       fill="none" stroke="#ffffff" stroke-width="2.4"
+       stroke-linecap="round" stroke-linejoin="round">
+    <!-- the arc between the arms - the measurement itself -->
+    <path d="M15 18 A 9 9 0 0 0 11.4 10.8" opacity="0.7"/>
+    <!-- fixed arm -->
+    <path d="M6 18 H 19"/>
+    <!-- moving arm -->
+    <path d="M6 18 L 15.2 7.4"/>
+    <!-- pivot -->
+    <circle cx="6" cy="18" r="1.9" fill="#ffffff" stroke="none"/>
+  </svg>
+</svg>

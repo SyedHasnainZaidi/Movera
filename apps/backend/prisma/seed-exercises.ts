@@ -106,9 +106,24 @@ export const EXERCISE_SEEDS: ExerciseSeed[] = [
     category: 'Lower Body',
     difficulty: Difficulty.MEDIUM,
     targetBodyArea: 'Knee, hip',
-    recommendedView: CameraView.FRONT,
+    // SIDE, and this is not a preference - it is the only view the movement
+    // can be measured from.
+    //
+    // A squat is a SAGITTAL-plane movement: the knee bends forwards. The
+    // thresholds below (rest 160 deg, peak 120 deg) are knee-flexion angles
+    // carried over from squat.py, which analysed side-on footage.
+    //
+    // Face-on, the hip, knee and ankle stay almost vertically stacked in the
+    // image however deep the squat is, because the knee travels TOWARDS the
+    // camera and that motion is along the axis a 2-D pose estimate cannot
+    // see. Measured from the front, a full squat reads about 165-178 deg - a
+    // swing of roughly 10 deg, most of it inside the noise of the estimate,
+    // and never anywhere near the 120 deg needed to count a repetition. A
+    // patient squatting perfectly would score zero repetitions forever, which
+    // is exactly what was reported.
+    recommendedView: CameraView.SIDE,
     framingInstructions:
-      'Stand facing the camera, 2-3 metres away, with your whole body from shoulders to ankles in frame. Only the patient should be visible.',
+      'Stand SIDE-ON to the camera - one shoulder towards it, not your face - about 2-3 metres away, with your whole body from head to feet in frame. Keep your feet in shot the whole way down: the count pauses if your ankles leave the picture. Side-on is what lets the camera see your knee bend; facing it, the bend is hidden and nothing will count.',
     defaultSets: 3,
     defaultReps: 10,
     isActive: true,
@@ -123,26 +138,37 @@ export const EXERCISE_SEEDS: ExerciseSeed[] = [
       angleDefinitions: {
         leftKnee: { type: 'joint', a: 'left_hip', b: 'left_knee', c: 'left_ankle' },
         rightKnee: { type: 'joint', a: 'right_hip', b: 'right_knee', c: 'right_ankle' },
-        // Both knees flex together in a squat, so averaging is correct here.
+        // AVERAGE. `min` was tried here and is worse: side-on the far leg is
+        // occluded, and a single noisy frame reading it as bent drags the
+        // minimum below the rest threshold and holds it there, so the cycle
+        // never returns to UP and nothing is ever counted. The mean of the two
+        // absorbs that noise instead of being captured by it.
         knee: { type: 'average', of: ['leftKnee', 'rightKnee'] },
 
         leftHip: { type: 'joint', a: 'left_shoulder', b: 'left_hip', c: 'left_knee' },
         rightHip: { type: 'joint', a: 'right_shoulder', b: 'right_hip', c: 'right_knee' },
+        // Reported for the therapist. No rule tests it any more - see trunkTilt.
         hip: { type: 'average', of: ['leftHip', 'rightHip'] },
 
-        // squat.py: knee_width < ankle_width * 0.7 -> "Keep knees aligned".
-        // Expressed as a ratio because both widths scale with how far away the
-        // patient stands, so neither works as a fixed pixel threshold.
-        kneeWidth: { type: 'gap_x', a: 'left_knee', b: 'right_knee' },
-        ankleWidth: { type: 'gap_x', a: 'left_ankle', b: 'right_ankle' },
-        kneeAnkleRatio: { type: 'ratio', numerator: 'kneeWidth', denominator: 'ankleWidth' },
+        // Trunk lean measured against GRAVITY rather than as a joint angle.
+        // 0 deg is perfectly upright, 90 deg is folded horizontal.
+        trunkTilt: { type: 'vertical', upper: 'mid_shoulder', lower: 'mid_hip' },
       },
       movementStateConfig: {
         primaryAngle: 'knee',
         direction: 'DECREASING',
-        // squat.py _detect_state: >160 standing, 70-120 down.
-        restAngle: 160,
-        peakAngle: 120,
+        // squat.py _detect_state used >160 standing, 70-120 down. Both are
+        // widened here, because those numbers assume a clean side-on angle
+        // measurement and a 2-D pose estimate consistently UNDER-reads knee
+        // flexion - the far leg is occluded and the median filter trims the
+        // extremes of the descent.
+        //
+        // peak 130 corresponds to roughly 35 deg of true knee flexion: a clear
+        // half squat, not a token dip, but reachable without having to hit
+        // depth that a camera struggles to see. rest 155 means the patient no
+        // longer has to lock out completely between repetitions.
+        restAngle: 155,
+        peakAngle: 130,
         hysteresisDeg: 8,
         minStateFrames: 2,
         cooldownMs: 600,
@@ -161,21 +187,37 @@ export const EXERCISE_SEEDS: ExerciseSeed[] = [
           joint: 'knee',
         },
         {
-          // squat.py: hip_angle < 150 -> "Keep your back straight".
+          // "Keep your back straight", but measured against gravity.
+          //
+          // This used to test the shoulder-hip-knee JOINT angle against a
+          // minimum of 150 deg, carried over from squat.py. That is impossible
+          // to satisfy while squatting: the hip is a hinge, and closing it is
+          // how the movement happens. Standing reads about 175 deg, a squat to
+          // parallel reads about 90 deg even with a perfectly vertical back -
+          // so the rule fired on every correct repetition and told the patient
+          // to straighten up while they were doing exactly the right thing.
+          //
+          // What "leaning too far forward" actually means is the TRUNK tipping
+          // away from vertical, which is independent of how deep the hip is
+          // folded. 55 deg is deliberately generous: a bodyweight squat
+          // normally leans 20-45 deg, so this flags only a genuine fold.
           code: 'TRUNK_LEAN',
-          angle: 'hip',
+          angle: 'trunkTilt',
           when: 'always',
-          min: 150,
+          max: 55,
           joint: 'hip',
         },
-        {
-          // squat.py: knee_width < ankle_width * 0.7 -> "Keep knees aligned".
-          code: 'KNEE_ALIGNMENT',
-          angle: 'kneeAnkleRatio',
-          when: 'always',
-          min: 0.7,
-          joint: 'knee',
-        },
+        // The knee-alignment (valgus) check from squat.py is deliberately NOT
+        // here any more. It compared knee separation against ankle separation,
+        // and both are FRONTAL-plane measurements: side-on the two knees sit
+        // one behind the other, so the widths collapse towards zero and the
+        // ratio becomes meaningless - noise divided by noise, firing at random
+        // and marking down repetitions that were performed correctly.
+        //
+        // It cannot be salvaged from this camera angle. Detecting knee valgus
+        // properly needs a face-on view, which is the one the depth
+        // measurement cannot use - so it belongs to a separate front-facing
+        // assessment, not to this exercise.
       ],
       minVisibility: 0.5,
       repCorrectnessThreshold: 70,

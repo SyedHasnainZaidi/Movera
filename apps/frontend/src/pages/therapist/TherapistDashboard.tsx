@@ -142,13 +142,19 @@ export function TherapistDashboardPage() {
                   No completed sessions yet.
                 </p>
               ) : (
+                // No justify-between on the row. With three children it shares
+                // the free space BETWEEN them, so the score drifted left and
+                // right with the length of the text beside it and the column
+                // of numbers came out ragged. Letting the details block take
+                // the slack instead pins the score and the arrow to the right
+                // edge on every row.
                 data.recentSessions.map((session) => (
                   <Link
                     key={session.sessionId}
                     to={`/therapist/sessions/${session.sessionId}/report`}
-                    className="row-interactive flex items-center justify-between gap-3 px-5 py-3"
+                    className="row-interactive flex items-center gap-3 px-5 py-3"
                   >
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-ink-900">
                         {session.patientName}
                       </p>
@@ -158,7 +164,9 @@ export function TherapistDashboardPage() {
                         {describeAchievement(session)}
                       </p>
                     </div>
-                    <span className="type-measure shrink-0 text-sm font-semibold text-ink-700">
+                    {/* Fixed width and right-aligned, so 0, 80 and 100 share a
+                        right edge and the arrow never shifts between rows. */}
+                    <span className="type-measure w-10 shrink-0 text-right text-sm font-semibold text-ink-700">
                       {session.performanceScore?.toFixed(0) ?? '—'}
                     </span>
                     <RowArrow />

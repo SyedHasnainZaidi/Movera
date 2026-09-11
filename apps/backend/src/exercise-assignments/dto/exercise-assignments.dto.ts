@@ -27,11 +27,15 @@ export class CreateAssignmentDto {
   @Length(1, 64)
   exerciseId!: string;
 
-  @ApiPropertyOptional({ description: 'Optional RehabilitationPlan.id.' })
-  @IsOptional()
+  @ApiProperty({
+    description:
+      'RehabilitationPlan.id of the ACTIVE plan this exercise belongs to. ' +
+      'Required: an exercise is prescribed as part of a plan of treatment, ' +
+      'never on its own.',
+  })
   @IsString()
   @Length(1, 64)
-  planId?: string;
+  planId!: string;
 
   @ApiProperty({
     minimum: 1,

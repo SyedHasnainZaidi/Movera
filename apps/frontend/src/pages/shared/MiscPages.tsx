@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+﻿import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, getErrorMessage } from '../../api/client';
 import { Reveal } from '../../components/motion';
@@ -14,13 +14,9 @@ import {
   PrototypeDisclaimer,
   RowArrow,
 } from '../../components/ui';
-import {
-  describeAchievement,
-  describePrescription,
-} from '../../lib/prescription';
+import { describeAchievement } from '../../lib/prescription';
 import type {
   AppNotification,
-  Assignment,
   Page,
   SessionSummary,
 } from '../../types/api';
@@ -82,17 +78,17 @@ export function SessionHistoryPage() {
                       )}
                     </div>
                     <p className="mt-0.5 text-sm text-ink-500">
-                      {new Date(session.startedAt).toLocaleString()} ·{' '}
+                      {new Date(session.startedAt).toLocaleString()} Â·{' '}
                       {describeAchievement(session)}
                       {/* correctReps is always 0 on a held session - it counted
                           no repetitions - so showing it would read as a fail. */}
                       {session.goalType !== 'HOLD' &&
-                        ` · ${session.correctReps} good form`}
+                        ` Â· ${session.correctReps} good form`}
                     </p>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="type-measure text-lg font-semibold text-ink-700">
-                      {session.performanceScore?.toFixed(0) ?? '—'}
+                      {session.performanceScore?.toFixed(0) ?? 'â€”'}
                     </span>
                     <RowArrow />
                   </div>
@@ -102,80 +98,6 @@ export function SessionHistoryPage() {
           </Card>
         )}
       </div>
-    </div>
-  );
-}
-
-/** Patient exercise list - a fuller view than the dashboard summary. */
-export function MyExercisesPage() {
-  const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['assignments', 'me'],
-    queryFn: async () => {
-      const { data } = await api.get<Assignment[]>('/assignments');
-      return data;
-    },
-  });
-
-  if (isLoading) {
-    return (
-      <div className="mx-auto max-w-4xl px-4 py-8">
-        <LoadingBlock label="Loading exercises" />
-      </div>
-    );
-  }
-
-  if (isError || !data) {
-    return (
-      <div className="mx-auto max-w-4xl px-4 py-8">
-        <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />
-      </div>
-    );
-  }
-
-  const active = data.filter((item) => item.status === 'ACTIVE');
-
-  return (
-    <div className="mx-auto max-w-4xl px-4 py-8">
-      <Reveal>
-        <PageHeader
-          title="My exercises"
-          description="Prescribed by your physiotherapist"
-        />
-      </Reveal>
-
-      <div className="mt-6 space-y-4">
-        {active.length === 0 ? (
-          <EmptyState
-            title="No active exercises"
-            description="Your physiotherapist has not prescribed any exercises yet."
-          />
-        ) : (
-          active.map((assignment, index) => (
-            <Card key={assignment.id} revealIndex={index} className="p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h2 className="text-base font-semibold text-ink-900">
-                    {assignment.exercise?.name}
-                  </h2>
-                  <p className="mt-1 text-sm text-ink-600">
-                    {describePrescription(assignment)}
-                  </p>
-                  {assignment.instructions && (
-                    <p className="mt-2 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-800">
-                      {assignment.instructions}
-                    </p>
-                  )}
-                </div>
-                <Link to={`/patient/session/${assignment.id}`}>
-                  <Button>Start session</Button>
-                </Link>
-              </div>
-            </Card>
-          ))
-        )}
-      </div>
-
-      <PrototypeDisclaimer className="mt-8" />
     </div>
   );
 }
@@ -372,8 +294,8 @@ export function ExerciseLibraryPage() {
                   {exercise.description}
                 </p>
                 <p className="mt-2 text-xs text-ink-500">
-                  {exercise.category} · {exercise.targetBodyArea} · default{' '}
-                  {exercise.defaultSets} × {exercise.defaultReps}
+                  {exercise.category} Â· {exercise.targetBodyArea} Â· default{' '}
+                  {exercise.defaultSets} Ã— {exercise.defaultReps}
                 </p>
               </div>
             </div>

@@ -3,6 +3,7 @@ import {
   AssignmentStatus,
   ExerciseGoalType,
   NotificationType,
+  PlanStatus,
   Prisma,
   SessionStatus,
   UserRole,
@@ -74,22 +75,32 @@ export class ExerciseAssignmentsService {
       );
     }
 
-    if (dto.planId) {
-      const plan = await this.prisma.rehabilitationPlan.findUnique({
-        where: { id: dto.planId },
-        select: { patientId: true },
-      });
-      if (!plan || plan.patientId !== dto.patientId) {
-        throw AppError.badRequest(
-          AppErrorCode.PLAN_NOT_FOUND,
-          'That plan does not belong to this patient.',
-        );
-      }
+    // Every exercise belongs to a plan. A prescription with no plan behind it
+    // has no stated goal, no start and end date and no clinical context, which
+    // is how the superseded prototype let exercises accumulate on a patient as
+    // an unexplained list. The plan must also still be ACTIVE - assigning into
+    // one the therapist has already completed or cancelled would put work in
+    // front of the patient that the plan says is finished.
+    const plan = await this.prisma.rehabilitationPlan.findUnique({
+      where: { id: dto.planId },
+      select: { patientId: true, status: true, title: true },
+    });
+    if (!plan || plan.patientId !== dto.patientId) {
+      throw AppError.badRequest(
+        AppErrorCode.PLAN_NOT_FOUND,
+        'That plan does not belong to this patient.',
+      );
+    }
+    if (plan.status !== PlanStatus.ACTIVE) {
+      throw AppError.badRequest(
+        AppErrorCode.PLAN_NOT_ACTIVE,
+        `"${plan.title}" is ${plan.status.toLowerCase()}, so exercises cannot be added to it. Reactivate it or create a new plan first.`,
+      );
     }
 
     const assignment = await this.prisma.exerciseAssignment.create({
       data: {
-        planId: dto.planId ?? null,
+        planId: dto.planId,
         patientId: dto.patientId,
         therapistId: therapistProfileId,
         exerciseId: dto.exerciseId,

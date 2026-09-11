@@ -42,6 +42,7 @@ export enum AppErrorCode {
   EXERCISE_INACTIVE = 'EXERCISE_INACTIVE',
   RULE_CONFIG_MISSING = 'RULE_CONFIG_MISSING',
   PLAN_NOT_FOUND = 'PLAN_NOT_FOUND',
+  PLAN_NOT_ACTIVE = 'PLAN_NOT_ACTIVE',
   ACTIVE_PLAN_EXISTS = 'ACTIVE_PLAN_EXISTS',
   ASSIGNMENT_NOT_FOUND = 'ASSIGNMENT_NOT_FOUND',
   ASSIGNMENT_NOT_ACTIVE = 'ASSIGNMENT_NOT_ACTIVE',
@@ -99,8 +100,17 @@ export class AppError extends HttpException {
     return new AppError(code, message, HttpStatus.NOT_FOUND);
   }
 
-  static conflict(code: AppErrorCode, message: string): AppError {
-    return new AppError(code, message, HttpStatus.CONFLICT);
+  /**
+   * `details` matters here more than on most errors: a conflict is usually
+   * caused by a specific OTHER row, and the client can only offer a way out of
+   * it - resume that one, cancel it - if it is told which one.
+   */
+  static conflict(
+    code: AppErrorCode,
+    message: string,
+    details?: unknown,
+  ): AppError {
+    return new AppError(code, message, HttpStatus.CONFLICT, details);
   }
 
   static badRequest(

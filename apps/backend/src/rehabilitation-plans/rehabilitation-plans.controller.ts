@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import {
@@ -51,5 +60,21 @@ export class RehabilitationPlansController {
     @Body() dto: UpdatePlanDto,
   ) {
     return this.plans.update(user, planId, dto);
+  }
+
+  @Roles(UserRole.THERAPIST)
+  @Delete(':id')
+  @ApiOperation({
+    summary: 'Remove a plan and the exercises prescribed under it',
+    description:
+      'Deletes the plan and its assignments outright when NO sessions have ' +
+      'been recorded under it. When sessions exist, the plan and its ' +
+      'assignments are archived (CANCELLED) instead and the history is kept - ' +
+      'a rehabilitation record must not lose completed sessions to a tidy-up. ' +
+      'The response reports which of the two happened. Refused with 409 while ' +
+      'the patient has a live session on any exercise in the plan.',
+  })
+  remove(@CurrentUser() user: AuthUser, @Param('id') planId: string) {
+    return this.plans.remove(user, planId);
   }
 }

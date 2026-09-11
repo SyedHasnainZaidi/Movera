@@ -6,13 +6,13 @@ import { RegisterPage } from '../pages/auth/RegisterPage';
 import { ResetPasswordPage } from '../pages/auth/ResetPasswordPage';
 import { VerifyEmailPage } from '../pages/auth/VerifyEmailPage';
 import { LiveSessionPage } from '../pages/patient/LiveSessionPage';
+import { MyPlansPage } from '../pages/patient/MyPlansPage';
 import { MyTherapistPage } from '../pages/patient/MyTherapistPage';
 import { PatientDashboardPage } from '../pages/patient/PatientDashboard';
 import { ProgressPage } from '../pages/patient/ProgressPage';
 import { SessionReportPage } from '../pages/patient/SessionReportPage';
 import {
   ExerciseLibraryPage,
-  MyExercisesPage,
   NotFoundPage,
   NotificationsPage,
   SessionHistoryPage,
@@ -107,12 +107,21 @@ export function AppRoutes() {
           }
         />
         <Route
-          path="/patient/exercises"
+          path="/patient/plans"
           element={
             <RoleRoute role="PATIENT">
-              <MyExercisesPage />
+              <MyPlansPage />
             </RoleRoute>
           }
+        />
+        {/*
+          The old flat exercise list lived here. Kept as a redirect because the
+          path may be bookmarked, and a 404 for a patient looking for their
+          exercises is a worse outcome than a hop.
+        */}
+        <Route
+          path="/patient/exercises"
+          element={<Navigate to="/patient/plans" replace />}
         />
         <Route
           path="/patient/sessions"

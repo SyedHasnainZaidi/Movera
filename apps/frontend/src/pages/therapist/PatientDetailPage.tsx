@@ -192,6 +192,17 @@ export function PatientDetailPage() {
   );
 }
 
+/** A plan description must say something; the API enforces the same floor. */
+const GOALS_MIN_LENGTH = 10;
+
+/**
+ * The plan half of the prescription flow.
+ *
+ * A plan is the unit of treatment: it carries the goal, the dates and the
+ * clinical rationale, and every exercise is prescribed under one. So this card
+ * owns the whole lifecycle - create, edit, remove - rather than only creation,
+ * which is what it did when a plan could not be changed once made.
+ */
 function PlanCard({
   patientId,
   plan,
@@ -201,60 +212,181 @@ function PlanCard({
   plan: PatientDetail['activePlan'];
   onChanged: () => void;
 }) {
-  const [title, setTitle] = useState('');
-  const [goals, setGoals] = useState('');
+  const [mode, setMode] = useState<'view' | 'edit' | 'confirmRemove'>('view');
+  /** What the server reported about the last removal, shown once afterwards. */
+  const [removalOutcome, setRemovalOutcome] = useState<string | null>(null);
 
-  const create = useMutation({
-    mutationFn: async () => {
-      await api.post('/rehabilitation-plans', {
-        patientId,
-        title,
-        goals: goals || undefined,
-        startDate: new Date().toISOString().slice(0, 10),
-      });
-    },
-    onSuccess: () => {
-      setTitle('');
-      setGoals('');
-      onChanged();
-    },
-  });
+  // Returning to view mode whenever the plan identity changes keeps a stale
+  // edit form from being shown against a different plan.
+  //
+  // Both sides are normalised to `null` deliberately. Comparing a raw
+  // `plan?.id` (undefined when there is no plan) against a stored null would
+  // never settle: the branch would re-fire on every render and loop forever
+  // the moment the plan went away while this card was not in view mode.
+  const [editingPlanId, setEditingPlanId] = useState<string | null>(null);
+  const currentPlanId = plan?.id ?? null;
+  if (currentPlanId !== editingPlanId && mode !== 'view') {
+    setEditingPlanId(currentPlanId);
+    setMode('view');
+  }
 
-  if (plan) {
+  if (!plan) {
     return (
-      <Card>
-        <CardHeader title="Active rehabilitation plan" />
-        <div className="p-5">
-          <p className="text-sm font-semibold text-ink-900">{plan.title}</p>
-          {plan.goals && (
-            <p className="mt-2 text-sm leading-relaxed text-ink-700">
-              {plan.goals}
-            </p>
-          )}
-          <p className="mt-3 text-xs text-ink-500">
-            Started {new Date(plan.startDate).toLocaleDateString()}
-          </p>
-          <p className="mt-3 text-xs text-ink-500">
-            A patient may have only one active plan at a time.
-          </p>
-        </div>
-      </Card>
+      <PlanForm
+        patientId={patientId}
+        notice={removalOutcome}
+        onDone={() => {
+          setRemovalOutcome(null);
+          onChanged();
+        }}
+      />
+    );
+  }
+
+  if (mode === 'edit') {
+    return (
+      <PlanForm
+        patientId={patientId}
+        plan={plan}
+        onDone={() => {
+          setMode('view');
+          onChanged();
+        }}
+        onCancel={() => setMode('view')}
+      />
     );
   }
 
   return (
     <Card>
+      <CardHeader title="Active rehabilitation plan" />
+      <div className="p-5">
+        <p className="text-sm font-semibold text-ink-900">{plan.title}</p>
+        {plan.goals && (
+          <p className="mt-2 text-sm leading-relaxed text-ink-700">
+            {plan.goals}
+          </p>
+        )}
+        <p className="mt-3 text-xs text-ink-500">
+          Started {new Date(plan.startDate).toLocaleDateString()}
+          {plan.endDate &&
+            ` · ends ${new Date(plan.endDate).toLocaleDateString()}`}
+        </p>
+
+        {mode === 'confirmRemove' ? (
+          <RemovePlanConfirm
+            plan={plan}
+            onCancel={() => setMode('view')}
+            onRemoved={(message) => {
+              setRemovalOutcome(message);
+              setMode('view');
+              onChanged();
+            }}
+          />
+        ) : (
+          <>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setEditingPlanId(plan.id);
+                  setMode('edit');
+                }}
+              >
+                Edit plan
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setEditingPlanId(plan.id);
+                  setMode('confirmRemove');
+                }}
+              >
+                Remove plan
+              </Button>
+            </div>
+            <p className="mt-3 text-xs text-ink-500">
+              A patient may have only one active plan at a time.
+            </p>
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Create or edit a plan. One component for both, because the fields and their
+ * rules are identical and keeping them in step across two forms is exactly the
+ * kind of drift that leaves one of them accepting something the other rejects.
+ */
+function PlanForm({
+  patientId,
+  plan,
+  notice,
+  onDone,
+  onCancel,
+}: {
+  patientId: string;
+  plan?: NonNullable<PatientDetail['activePlan']>;
+  notice?: string | null;
+  onDone: () => void;
+  onCancel?: () => void;
+}) {
+  const editing = plan != null;
+  const [title, setTitle] = useState(plan?.title ?? '');
+  const [goals, setGoals] = useState(plan?.goals ?? '');
+
+  const save = useMutation({
+    mutationFn: async () => {
+      if (editing) {
+        await api.patch(`/rehabilitation-plans/${plan.id}`, {
+          title: title.trim(),
+          goals: goals.trim(),
+        });
+      } else {
+        await api.post('/rehabilitation-plans', {
+          patientId,
+          title: title.trim(),
+          goals: goals.trim(),
+          startDate: new Date().toISOString().slice(0, 10),
+        });
+      }
+    },
+    onSuccess: onDone,
+  });
+
+  const goalsTooShort = goals.trim().length < GOALS_MIN_LENGTH;
+  const incomplete = !title.trim() || goalsTooShort;
+
+  return (
+    <Card>
       <CardHeader
-        title="Create a rehabilitation plan"
-        description="Required before assigning exercises to a plan"
+        title={editing ? 'Edit rehabilitation plan' : 'Create a rehabilitation plan'}
+        description={
+          editing
+            ? 'The patient is notified when a plan changes'
+            : 'Required before any exercise can be assigned'
+        }
       />
       <form
         className="space-y-4 p-5"
         onSubmit={(event) => {
           event.preventDefault();
-          if (title.trim()) create.mutate();
+          if (!incomplete) save.mutate();
         }}
       >
+        {notice && (
+          <p
+            role="status"
+            className="rounded-panel border border-ink-200 bg-sunken px-3.5 py-2.5 text-sm text-ink-700"
+          >
+            {notice}
+          </p>
+        )}
+
         <Field label="Plan title" htmlFor="planTitle">
           <input
             id="planTitle"
@@ -264,7 +396,12 @@ function PlanCard({
             className={inputClass}
           />
         </Field>
-        <Field label="Goals" htmlFor="planGoals">
+
+        <Field
+          label="Description and goals"
+          htmlFor="planGoals"
+          hint="What this course of treatment is for. The patient sees this, and every exercise you assign sits under it."
+        >
           <textarea
             id="planGoals"
             value={goals}
@@ -274,19 +411,112 @@ function PlanCard({
             className={inputClass}
           />
         </Field>
-        {create.isError && (
+
+        {save.isError && (
           <p className="text-sm text-problem-700" role="alert">
-            {getErrorMessage(create.error)}
+            {getErrorMessage(save.error)}
           </p>
         )}
-        <Button type="submit" loading={create.isPending} disabled={!title.trim()}>
-          Create plan
-        </Button>
+
+        <div className="flex flex-wrap gap-2">
+          <Button type="submit" loading={save.isPending} disabled={incomplete}>
+            {editing ? 'Save changes' : 'Create plan'}
+          </Button>
+          {onCancel && (
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={save.isPending}
+              onClick={onCancel}
+            >
+              Cancel
+            </Button>
+          )}
+        </div>
       </form>
     </Card>
   );
 }
 
+/**
+ * Confirmation for removing a plan.
+ *
+ * The copy has to cover both outcomes without knowing which applies, because
+ * the server decides from the session count: a plan nothing has been recorded
+ * against is deleted, one with history is archived and kept. Promising
+ * deletion and then archiving - or the reverse - would be worse than
+ * describing both, so it names the rule and reports what actually happened.
+ */
+function RemovePlanConfirm({
+  plan,
+  onCancel,
+  onRemoved,
+}: {
+  plan: NonNullable<PatientDetail['activePlan']>;
+  onCancel: () => void;
+  onRemoved: (message: string) => void;
+}) {
+  const remove = useMutation({
+    mutationFn: async () => {
+      const { data } = await api.delete<{ deleted: boolean; message: string }>(
+        `/rehabilitation-plans/${plan.id}`,
+      );
+      return data;
+    },
+    onSuccess: (data) => onRemoved(data.message),
+  });
+
+  return (
+    <div
+      role="alertdialog"
+      aria-label={`Remove ${plan.title}`}
+      className="mt-4 rounded-lg border border-problem-500/30 bg-problem-50 px-4 py-3"
+    >
+      <p className="text-sm font-medium text-problem-700">
+        Remove &ldquo;{plan.title}&rdquo;?
+      </p>
+      <p className="mt-1 text-sm text-ink-700">
+        The exercises prescribed under it go too. If the patient has completed
+        sessions on any of them, the plan is <strong>archived</strong> and all
+        of that history — sessions, repetitions and reports — is kept. If
+        nothing has been recorded yet, it is deleted outright.
+      </p>
+      <div className="mt-3 flex gap-2">
+        <Button
+          variant="danger"
+          size="sm"
+          loading={remove.isPending}
+          onClick={() => remove.mutate()}
+        >
+          Remove plan
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={remove.isPending}
+          onClick={onCancel}
+        >
+          Cancel
+        </Button>
+      </div>
+      {remove.isError && (
+        <p role="alert" className="mt-2 text-sm font-medium text-problem-700">
+          {getErrorMessage(remove.error)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The exercise half of the prescription flow.
+ *
+ * Gated on an active plan. An exercise assigned with no plan behind it has no
+ * stated goal, no dates and no clinical context - it is just an item that
+ * appeared on the patient's list - so the form is not offered at all until a
+ * plan exists. The API refuses the same request independently; this is the
+ * half that explains why rather than only saying no.
+ */
 function AssignCard({
   patientId,
   planId,
@@ -294,6 +524,35 @@ function AssignCard({
 }: {
   patientId: string;
   planId?: string;
+  onChanged: () => void;
+}) {
+  if (!planId) {
+    return (
+      <Card>
+        <CardHeader
+          title="Assign an exercise"
+          description="Needs an active rehabilitation plan"
+        />
+        <div className="p-5">
+          <EmptyState
+            title="Create a plan first"
+            description="Exercises are prescribed as part of a plan of treatment. Give the plan a title and a description of what it is for, then assign exercises under it."
+          />
+        </div>
+      </Card>
+    );
+  }
+
+  return <AssignForm patientId={patientId} planId={planId} onChanged={onChanged} />;
+}
+
+function AssignForm({
+  patientId,
+  planId,
+  onChanged,
+}: {
+  patientId: string;
+  planId: string;
   onChanged: () => void;
 }) {
   const [exerciseId, setExerciseId] = useState('');

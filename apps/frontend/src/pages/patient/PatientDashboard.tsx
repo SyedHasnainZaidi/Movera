@@ -269,9 +269,9 @@ function TodayPanel({ assignments }: { assignments: Assignment[] }) {
             be practised.
           </p>
         </div>
-        <Link to="/patient/exercises">
+        <Link to="/patient/plans">
           <Button variant="secondary" size="sm">
-            Browse my exercises
+            Browse my plans
           </Button>
         </Link>
       </div>

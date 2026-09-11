@@ -58,9 +58,33 @@ export interface ExerciseSummary {
   recommendedView?: CameraView;
 }
 
+export type PlanStatus = 'DRAFT' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
+
+/** A course of treatment. Every assignment is prescribed under one. */
+export interface RehabilitationPlan {
+  id: string;
+  title: string;
+  goals: string | null;
+  startDate: string;
+  endDate: string | null;
+  status: PlanStatus;
+  notes: string | null;
+  therapistName: string;
+  assignmentCount: number;
+}
+
 export interface Assignment {
   id: string;
   exercise: ExerciseSummary;
+  /**
+   * The plan this exercise belongs to.
+   *
+   * Nullable only for rows created before a plan became mandatory. The
+   * patient's plan view groups those under a separate heading rather than
+   * dropping them, because they are still exercises they were told to do.
+   */
+  planId?: string | null;
+  plan?: { id: string; title: string } | null;
   targetSets: number;
   repsPerSet: number;
   targetTotalReps: number;
@@ -129,6 +153,14 @@ export interface SessionSummary {
 export interface CreatedSession {
   id: string;
   status: SessionStatus;
+  /**
+   * True when this session was already running and has been handed back
+   * rather than newly created - a reload, a dropped socket, a tab the browser
+   * discarded. The repetitions already counted are still on it.
+   *
+   * Optional only for responses that predate the field.
+   */
+  resumed?: boolean;
   exercise: {
     slug: string;
     name: string;

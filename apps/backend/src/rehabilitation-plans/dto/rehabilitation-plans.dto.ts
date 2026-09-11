@@ -20,13 +20,15 @@ export class CreatePlanDto {
   @Length(3, 160)
   title!: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     example: 'Restore knee flexion range and build quadriceps endurance.',
+    description:
+      'What the plan is for. Required: every exercise prescribed under this ' +
+      'plan inherits its clinical rationale, and the patient is shown it.',
   })
-  @IsOptional()
   @IsString()
-  @MaxLength(2000)
-  goals?: string;
+  @Length(10, 2000)
+  goals!: string;
 
   @ApiProperty({ example: '2026-09-01' })
   @IsISO8601()
@@ -56,10 +58,13 @@ export class UpdatePlanDto {
   @Length(3, 160)
   title?: string;
 
+  // Optional to SEND - omitting it leaves the plan's goals unchanged - but not
+  // blankable. Creation requires a description, so an edit must not be a way
+  // to end up with a plan that has none.
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  @MaxLength(2000)
+  @Length(10, 2000)
   goals?: string;
 
   @ApiPropertyOptional()

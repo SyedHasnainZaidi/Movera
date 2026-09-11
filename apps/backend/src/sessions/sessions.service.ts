@@ -21,6 +21,19 @@ export const LIVE_STATUSES: SessionStatus[] = [
   SessionStatus.FINALIZING,
 ];
 
+/**
+ * How long a session may sit in FINALIZING before it is considered abandoned.
+ *
+ * complete() claims the row as FINALIZING and then writes the report inside a
+ * transaction - milliseconds apart. Anything still FINALIZING after this long
+ * is not in flight, it is stranded: the process died, the transaction failed,
+ * or the request was cut off between the two steps.
+ *
+ * Thirty seconds is deliberately far longer than finalization can legitimately
+ * take, so a healthy completion is never mistaken for a stuck one.
+ */
+const FINALIZING_STALE_MS = 30_000;
+
 @Injectable()
 export class SessionsService {
   private readonly logger = new Logger(SessionsService.name);
@@ -93,29 +106,82 @@ export class SessionsService {
       );
     }
 
-    // One live session per patient. Rejected with a helpful error rather than
-    // silently cancelling work the patient may still be doing.
+    // Clear any stranded finalization BEFORE looking for a blocker, so a row
+    // that is only nominally live cannot refuse the patient a session. Done
+    // here rather than left to the sweep because the sweep runs every five
+    // minutes and the patient is standing in front of their camera now.
+    await this.recoverStuckFinalizing(patientProfileId);
+
+    // One live session per patient - but "already live" is not automatically a
+    // conflict. Three cases, and telling them apart is what stops a patient
+    // getting permanently locked out of their own exercise.
     const existing = await this.prisma.exerciseSession.findFirst({
       where: { patientId: patientProfileId, status: { in: LIVE_STATUSES } },
-      select: { id: true, status: true, startedAt: true },
+      select: {
+        id: true,
+        status: true,
+        startedAt: true,
+        assignmentId: true,
+        exercise: { select: { name: true } },
+      },
     });
 
     if (existing) {
+      // 1. SAME exercise -> resume it.
+      //
+      // A dropped socket, a backgrounded tab the browser discarded, a reload:
+      // the patient comes back to the exercise they were already doing and
+      // must get their session back, not a refusal. Creating a second session
+      // would orphan the repetitions already recorded against the first, and
+      // refusing outright left them stuck until the 2-hour sweep - with no
+      // control anywhere in the UI to clear it, which is the bug this fixes.
+      //
+      // Resuming is safe because the analyzer is rebuilt from the PERSISTED
+      // repetition count when the pose service reconnects, so the count picks
+      // up where it left off instead of restarting at zero.
+      //
+      // FINALIZING is excluded deliberately: that session is mid-completion,
+      // and handing it back as resumable would race the finalizer.
+      if (
+        existing.assignmentId === assignmentId &&
+        existing.status !== SessionStatus.FINALIZING
+      ) {
+        const resumed = await this.prisma.exerciseSession.findUniqueOrThrow({
+          where: { id: existing.id },
+          include: { exercise: true },
+        });
+        this.logger.log(
+          `Session ${resumed.id} resumed by patient ${patientProfileId} (${assignment.exercise.slug})`,
+        );
+        return this.toCreatedDto(resumed, true);
+      }
+
       const staleAfterMs = this.config.createdSessionTtlMinutes * 60_000;
       const isStale =
         existing.status === SessionStatus.CREATED &&
         Date.now() - existing.startedAt.getTime() > staleAfterMs;
 
       if (isStale) {
-        // A session created but never activated (camera denied, tab closed).
+        // 2. A session created but never activated (camera denied, tab closed)
+        //    on a DIFFERENT exercise. Nothing was recorded; clear it.
         await this.prisma.exerciseSession.update({
           where: { id: existing.id },
           data: { status: SessionStatus.CANCELLED, endedAt: new Date() },
         });
       } else {
+        // 3. A genuinely different exercise is in progress. Still refused -
+        //    but the client is told WHICH session, so it can offer to resume
+        //    or cancel it instead of leaving the patient at a dead end.
         throw AppError.conflict(
           AppErrorCode.SESSION_ALREADY_LIVE,
-          'You already have a session in progress. Finish or cancel it first.',
+          `You have a session in progress on ${existing.exercise.name}. Finish or cancel it before starting another.`,
+          {
+            sessionId: existing.id,
+            assignmentId: existing.assignmentId,
+            exerciseName: existing.exercise.name,
+            status: existing.status,
+            startedAt: existing.startedAt.toISOString(),
+          },
         );
       }
     }
@@ -156,9 +222,90 @@ export class SessionsService {
       `Session ${session.id} created for patient ${patientProfileId} (${assignment.exercise.slug})`,
     );
 
+    return this.toCreatedDto(session, false);
+  }
+
+  /**
+   * Finish, or fail, any session stranded in FINALIZING.
+   *
+   * FINALIZING is the one status a patient could be trapped behind. It counts
+   * as live, so it blocks the next session; it is excluded from resuming,
+   * because resuming a session that is mid-completion would race the
+   * finalizer; and cancel() refuses it. A row that reached it and stopped was
+   * therefore unreachable from every direction until the two-hour sweep - the
+   * exact dead end the resume fix was meant to remove, wearing a different
+   * label.
+   *
+   * Finalizing is attempted rather than simply cancelling, because a session
+   * gets to FINALIZING only by the patient asking to complete it: the
+   * repetitions are already recorded, and the report can still be built from
+   * them. Only if that genuinely fails is the session marked FAILED - a system
+   * fault, never CANCELLED, which would misreport it as the patient's choice.
+   *
+   * Scoped to one patient: this runs on the hot path of starting a session and
+   * has no business touching anybody else's rows.
+   */
+  private async recoverStuckFinalizing(patientProfileId: string): Promise<void> {
+    const cutoff = new Date(Date.now() - FINALIZING_STALE_MS);
+
+    const stranded = await this.prisma.exerciseSession.findMany({
+      where: {
+        patientId: patientProfileId,
+        status: SessionStatus.FINALIZING,
+        updatedAt: { lt: cutoff },
+      },
+      select: { id: true },
+    });
+
+    for (const session of stranded) {
+      await this.finalizeStranded(session.id);
+    }
+  }
+
+  /**
+   * Complete one stranded session, falling back to FAILED.
+   *
+   * finalizeSession is idempotent - the report is upserted on a unique
+   * sessionId - so running it against a row a previous attempt got halfway
+   * through is safe.
+   */
+  private async finalizeStranded(sessionId: string): Promise<void> {
+    try {
+      await this.reports.finalizeSession(sessionId);
+      this.logger.warn(
+        `Session ${sessionId} was stranded in FINALIZING and has been completed`,
+      );
+    } catch (error) {
+      await this.prisma.exerciseSession.updateMany({
+        where: { id: sessionId, status: SessionStatus.FINALIZING },
+        data: { status: SessionStatus.FAILED, endedAt: new Date() },
+      });
+      this.logger.error(
+        `Session ${sessionId} could not be finalized and was marked FAILED`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+  }
+
+  /**
+   * The shape POST /sessions returns, for a new session and a resumed one
+   * alike.
+   *
+   * Identical on purpose: the browser sets up the camera, mints a ticket and
+   * connects the socket from this payload, and none of that should depend on
+   * whether the session is seconds or minutes old. `resumed` is the single
+   * difference, and it only changes what the screen SAYS - so that a patient
+   * returning to a session already holding repetitions is told so rather than
+   * being left to wonder why the counter does not start at zero.
+   */
+  private toCreatedDto(
+    session: Prisma.ExerciseSessionGetPayload<{ include: { exercise: true } }>,
+    resumed: boolean,
+  ) {
     return {
       id: session.id,
       status: session.status,
+      resumed,
       exercise: {
         slug: session.exercise.slug,
         name: session.exercise.name,
@@ -373,7 +520,13 @@ export class SessionsService {
 
     const session = await this.prisma.exerciseSession.findUnique({
       where: { id: sessionId },
-      select: { id: true, patientId: true, status: true, startedAt: true },
+      select: {
+        id: true,
+        patientId: true,
+        status: true,
+        startedAt: true,
+        updatedAt: true,
+      },
     });
 
     if (!session || session.patientId !== patientProfileId) {
@@ -387,13 +540,29 @@ export class SessionsService {
       return { id: session.id, status: session.status };
     }
 
+    // A session stranded in FINALIZING is cancellable once it is plainly not
+    // in flight any more. Without this the "cancel it and start another"
+    // control on the conflict screen is offered but always fails, which is
+    // worse than not offering it: the patient is told there is a way out and
+    // then finds there is not.
+    //
+    // The staleness check is what keeps this safe. Cancelling a finalization
+    // that started moments ago would race the finalizer; after thirty seconds
+    // there is nothing left to race.
+    const isStrandedFinalizing =
+      session.status === SessionStatus.FINALIZING &&
+      Date.now() - session.updatedAt.getTime() > FINALIZING_STALE_MS;
+
     if (
       session.status !== SessionStatus.CREATED &&
-      session.status !== SessionStatus.ACTIVE
+      session.status !== SessionStatus.ACTIVE &&
+      !isStrandedFinalizing
     ) {
       throw AppError.badRequest(
         AppErrorCode.SESSION_INVALID_STATE,
-        `A ${session.status.toLowerCase()} session cannot be cancelled.`,
+        session.status === SessionStatus.FINALIZING
+          ? 'This session is being finished right now. Give it a moment and try again.'
+          : `A ${session.status.toLowerCase()} session cannot be cancelled.`,
       );
     }
 
@@ -476,7 +645,11 @@ export class SessionsService {
    * Without this, every denied camera permission leaves a CREATED row that
    * blocks the patient's next session under the one-live-session rule.
    */
-  async sweepStaleSessions(): Promise<{ cancelled: number; failed: number }> {
+  async sweepStaleSessions(): Promise<{
+    cancelled: number;
+    failed: number;
+    finalized: number;
+  }> {
     const createdCutoff = new Date(
       Date.now() - this.config.createdSessionTtlMinutes * 60_000,
     );
@@ -489,23 +662,50 @@ export class SessionsService {
       data: { status: SessionStatus.CANCELLED, endedAt: new Date() },
     });
 
+    // Stranded finalizations are FINISHED, not failed.
+    //
+    // They are handled before - and separately from - the ACTIVE cap, on their
+    // own much shorter clock. A session only reaches FINALIZING because the
+    // patient asked to complete it, so its repetitions are already recorded
+    // and the report can still be built from them. Sweeping it to FAILED with
+    // everything else would throw away a finished piece of work and show the
+    // patient a system error for a session they completed.
+    const strandedCutoff = new Date(Date.now() - FINALIZING_STALE_MS);
+    const stranded = await this.prisma.exerciseSession.findMany({
+      where: {
+        status: SessionStatus.FINALIZING,
+        updatedAt: { lt: strandedCutoff },
+      },
+      select: { id: true },
+    });
+    for (const session of stranded) {
+      await this.finalizeStranded(session.id);
+    }
+
     // An ACTIVE session past the hard cap is a system fault (a socket that
     // never closed), not a patient decision - so FAILED, not CANCELLED.
+    // FINALIZING is no longer swept here: anything still in it after the pass
+    // above could not be finalized and has already been marked FAILED.
     const failed = await this.prisma.exerciseSession.updateMany({
       where: {
-        status: { in: [SessionStatus.ACTIVE, SessionStatus.FINALIZING] },
+        status: SessionStatus.ACTIVE,
         startedAt: { lt: activeCutoff },
       },
       data: { status: SessionStatus.FAILED, endedAt: new Date() },
     });
 
-    if (cancelled.count || failed.count) {
+    if (cancelled.count || failed.count || stranded.length) {
       this.logger.log(
-        `Swept stale sessions: ${cancelled.count} cancelled, ${failed.count} failed`,
+        `Swept stale sessions: ${cancelled.count} cancelled, ` +
+          `${failed.count} failed, ${stranded.length} stranded finalization(s) resolved`,
       );
     }
 
-    return { cancelled: cancelled.count, failed: failed.count };
+    return {
+      cancelled: cancelled.count,
+      failed: failed.count,
+      finalized: stranded.length,
+    };
   }
 
   /** Notify the therapist that a patient finished a session. */

@@ -1,9 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { NotificationType, Prisma, PlanStatus, UserRole } from '@prisma/client';
+import {
+  AssignmentStatus,
+  NotificationType,
+  Prisma,
+  PlanStatus,
+  UserRole,
+} from '@prisma/client';
 import { AccessControlService } from '../common/access/access-control.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import { AppError, AppErrorCode } from '../common/errors/app-error';
 import { PrismaService } from '../prisma/prisma.service';
+import { LIVE_STATUSES } from '../sessions/sessions.service';
 import type {
   CreatePlanDto,
   UpdatePlanDto,
@@ -120,6 +127,112 @@ export class RehabilitationPlansService {
     );
 
     return this.toDto(updated);
+  }
+
+  /**
+   * Remove a plan from the patient's record.
+   *
+   * Two outcomes, chosen by the data rather than by a flag - the same rule the
+   * assignment endpoint uses, applied one level up:
+   *
+   *   * **No sessions anywhere under the plan** - the plan and its assignments
+   *     are genuinely DELETED. Nothing clinical is lost because nothing
+   *     clinical happened: it was a mis-prescription, a duplicate, or a plan
+   *     the patient never started.
+   *
+   *   * **Sessions exist** - the plan and its assignments are ARCHIVED
+   *     (CANCELLED) and kept. Deleting would destroy completed sessions,
+   *     repetition records and reports that form the patient's rehabilitation
+   *     history, and a tidy-up must never cost a clinical record.
+   *
+   * The plan is treated as a unit. Deleting only its session-free assignments
+   * and cancelling the rest would leave a half-dismantled plan that is harder
+   * to reason about than either whole outcome.
+   *
+   * The assignments are handled EXPLICITLY rather than left to the schema's
+   * `onDelete: SetNull`. That default would strand them with a null planId -
+   * which, now that every assignment must belong to a plan, is precisely the
+   * state this endpoint must not create.
+   */
+  async remove(user: AuthUser, planId: string) {
+    const plan = await this.prisma.rehabilitationPlan.findUnique({
+      where: { id: planId },
+      select: { id: true, patientId: true, title: true, status: true },
+    });
+    if (!plan) {
+      throw AppError.notFound(AppErrorCode.PLAN_NOT_FOUND, 'Plan not found.');
+    }
+    await this.access.assertCanManagePatient(user, plan.patientId);
+
+    // A session in flight is writing to one of these assignments right now.
+    // Removing the plan underneath it would strand that session.
+    const live = await this.prisma.exerciseSession.findFirst({
+      where: { assignment: { planId }, status: { in: LIVE_STATUSES } },
+      select: { id: true },
+    });
+    if (live) {
+      throw AppError.conflict(
+        AppErrorCode.SESSION_ALREADY_LIVE,
+        'The patient is part-way through an exercise in this plan. Wait for ' +
+          'the session to finish, then remove it.',
+      );
+    }
+
+    const sessionCount = await this.prisma.exerciseSession.count({
+      where: { assignment: { planId } },
+    });
+
+    if (sessionCount === 0) {
+      await this.prisma.$transaction([
+        this.prisma.exerciseAssignment.deleteMany({ where: { planId } }),
+        this.prisma.rehabilitationPlan.delete({ where: { id: planId } }),
+      ]);
+      this.logger.log(`Plan ${planId} deleted (no recorded sessions)`);
+
+      await this.notifyPatient(
+        plan.patientId,
+        'Rehabilitation plan removed',
+        `Your physiotherapist removed the plan "${plan.title}".`,
+        { planId },
+      );
+
+      return {
+        id: planId,
+        deleted: true,
+        status: null,
+        message: `"${plan.title}" was removed. It had no recorded sessions, so nothing was archived.`,
+      };
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.exerciseAssignment.updateMany({
+        where: { planId, status: { not: AssignmentStatus.CANCELLED } },
+        data: { status: AssignmentStatus.CANCELLED },
+      }),
+      this.prisma.rehabilitationPlan.update({
+        where: { id: planId },
+        data: { status: PlanStatus.CANCELLED },
+      }),
+    ]);
+    this.logger.log(
+      `Plan ${planId} archived (CANCELLED) - ${sessionCount} session(s) kept`,
+    );
+
+    await this.notifyPatient(
+      plan.patientId,
+      'Rehabilitation plan ended',
+      `Your physiotherapist ended the plan "${plan.title}". Your completed sessions and reports are still available.`,
+      { planId },
+    );
+
+    return {
+      id: planId,
+      deleted: false,
+      status: PlanStatus.CANCELLED,
+      message: `"${plan.title}" was archived. ${sessionCount} recorded session${
+        sessionCount === 1 ? '' : 's'
+      } and the reports built from them were kept.`,
+    };
   }
 
   /** Role-scoped listing: patients see their own, therapists see their caseload. */

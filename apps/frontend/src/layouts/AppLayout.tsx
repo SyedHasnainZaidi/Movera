@@ -26,7 +26,7 @@ interface NavItem {
 
 const PATIENT_NAV: NavItem[] = [
   { to: '/patient', label: 'Overview', end: true },
-  { to: '/patient/exercises', label: 'My exercises' },
+  { to: '/patient/plans', label: 'My plans' },
   { to: '/patient/sessions', label: 'History' },
   { to: '/patient/progress', label: 'Progress' },
   { to: '/patient/therapist', label: 'My therapist' },

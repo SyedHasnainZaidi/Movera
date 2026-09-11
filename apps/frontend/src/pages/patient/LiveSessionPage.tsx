@@ -6,7 +6,12 @@ import {
   type ReactNode,
 } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { api, getErrorMessage } from '../../api/client';
+import {
+  api,
+  getErrorCode,
+  getErrorDetails,
+  getErrorMessage,
+} from '../../api/client';
 import { Button, ErrorState, PrototypeDisclaimer } from '../../components/ui';
 import { MoveraMark } from '../../components/MoveraLogo';
 import { useCamera } from '../../features/camera/useCamera';
@@ -51,7 +56,20 @@ type Phase =
   //: 'finishing' because the patient did not ask for it and has to be told
   //: what happened before the screen changes under them.
   | 'completing'
+  //: A live session on a DIFFERENT exercise is blocking this one. Separate
+  //: from 'error' because it is recoverable and the patient has to be given
+  //: the two ways out - go to that session, or cancel it.
+  | 'conflict'
   | 'error';
+
+/** The live session reported by a 409 from POST /sessions. */
+interface BlockingSession {
+  sessionId: string;
+  assignmentId: string;
+  exerciseName: string;
+  status: string;
+  startedAt: string;
+}
 
 /** How long one corrective cue is held before another may replace it. */
 const FEEDBACK_HOLD_MS = 2000;
@@ -72,6 +90,11 @@ export function LiveSessionPage() {
   const [ready, setReady] = useState<SessionReadyData | null>(null);
   const [pose, setPose] = useState<PoseUpdateData | null>(null);
   const [fatalError, setFatalError] = useState<string | null>(null);
+  //: The other live session standing in the way, from the 409 details.
+  const [blocking, setBlocking] = useState<BlockingSession | null>(null);
+  //: True when POST /sessions handed back a session that was already running,
+  //: so the screen can say the repetitions already counted have been kept.
+  const [resumed, setResumed] = useState(false);
   const [unpersistedReps, setUnpersistedReps] = useState(0);
   const [lastRep, setLastRep] = useState<RepCompletedData | null>(null);
   //: Set when the session ends itself. Drives the completion screen, which
@@ -201,6 +224,47 @@ export function LiveSessionPage() {
     [],
   );
 
+  // Mirrors for the visibility listener below. It is registered once, so it
+  // must not close over the first render's values.
+  const sessionRef = useRef<CreatedSession | null>(null);
+  sessionRef.current = session;
+  const phaseRef = useRef<Phase>(phase);
+  phaseRef.current = phase;
+  const socketStatusRef = useRef(socket.status);
+  socketStatusRef.current = socket.status;
+  const reconnectRef = useRef<() => Promise<void>>(() => Promise.resolve());
+
+  /**
+   * Coming back to a backgrounded tab.
+   *
+   * The frame sampler is driven by requestAnimationFrame, which the browser
+   * pauses while the tab is hidden - that part is deliberate and fine. What is
+   * not fine is what happens to the socket: a tab left in the background long
+   * enough is frozen or discarded, and the connection to the analysis service
+   * goes with it. The patient then returns to a session that looks live and
+   * silently counts nothing.
+   *
+   * So on becoming visible again, if there is a session and the socket is no
+   * longer up, reconnect with a fresh ticket. One attempt per return to the
+   * tab, never a retry loop: reconnecting needs a new ticket from the backend,
+   * and a loop against a failing service would just hammer it.
+   */
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!sessionRef.current) return;
+      if (phaseRef.current !== 'live' && phaseRef.current !== 'connecting') {
+        return;
+      }
+      const status = socketStatusRef.current;
+      if (status === 'ready' || status === 'connecting') return;
+      void reconnectRef.current();
+    };
+
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
+
   // --- actions ------------------------------------------------------------
 
   const beginCamera = async () => {
@@ -218,20 +282,53 @@ export function LiveSessionPage() {
   const startSession = async () => {
     setPhase('connecting');
     setFatalError(null);
+    setBlocking(null);
     try {
       const { data: created } = await api.post<CreatedSession>('/sessions', {
         assignmentId,
       });
       setSession(created);
+      setResumed(created.resumed === true);
 
       const { data: ticket } = await api.post<PoseTicket>(
         `/sessions/${created.id}/pose-ticket`,
       );
       socket.connect(ticket.ticket);
     } catch (error) {
+      // A live session on a DIFFERENT exercise is the one failure here that
+      // the patient can actually do something about, so it gets its own screen
+      // rather than a dead-end error. Returning to the SAME exercise no longer
+      // reaches this path at all - the server hands that session back.
+      const details = getErrorDetails<BlockingSession>(error);
+      if (getErrorCode(error) === 'SESSION_ALREADY_LIVE' && details) {
+        setBlocking(details);
+        setPhase('conflict');
+        return;
+      }
       setFatalError(getErrorMessage(error));
       setPhase('error');
     }
+  };
+
+  /**
+   * Cancel the session that is blocking this one, then start this one.
+   *
+   * Only ever reached from the conflict screen, where the patient has been
+   * told which exercise is being cancelled by name - this must not be a
+   * silent cleanup of work they might still want.
+   */
+  const cancelBlockingAndStart = async () => {
+    if (!blocking) return;
+    setPhase('connecting');
+    try {
+      await api.post(`/sessions/${blocking.sessionId}/cancel`);
+    } catch (error) {
+      setFatalError(getErrorMessage(error));
+      setPhase('error');
+      return;
+    }
+    setBlocking(null);
+    await startSession();
   };
 
   /** Reconnect after a dropped socket - always with a FRESH ticket. */
@@ -248,6 +345,7 @@ export function LiveSessionPage() {
       setPhase('error');
     }
   };
+  reconnectRef.current = reconnect;
 
   /**
    * Finalize and go to the report.
@@ -308,6 +406,48 @@ export function LiveSessionPage() {
             message={fatalError ?? 'This session could not be started.'}
             onRetry={() => navigate('/patient')}
           />
+        </div>
+      </Console>
+    );
+  }
+
+  // ---- another exercise is already running ----
+  if (phase === 'conflict' && blocking) {
+    return (
+      <Console>
+        <div className="mx-auto max-w-2xl px-4 py-10">
+          <h1 className="type-display text-[22px] text-white">
+            A session is already running
+          </h1>
+          <p className="mt-2 text-sm leading-relaxed text-stage-200">
+            You started <strong>{blocking.exerciseName}</strong> at{' '}
+            {new Date(blocking.startedAt).toLocaleTimeString()} and it has not
+            been finished. Only one exercise can be in progress at a time.
+          </p>
+
+          <div className="mt-6 flex flex-wrap gap-2">
+            <Button
+              variant="console"
+              onClick={() =>
+                navigate(`/patient/session/${blocking.assignmentId}`, {
+                  replace: true,
+                })
+              }
+            >
+              Go back to {blocking.exerciseName}
+            </Button>
+            <Button variant="console" onClick={() => void cancelBlockingAndStart()}>
+              Cancel it and start this one
+            </Button>
+            <Button variant="console" onClick={() => navigate('/patient')}>
+              Back to my dashboard
+            </Button>
+          </div>
+
+          <p className="mt-4 text-xs text-stage-400">
+            Cancelling keeps any repetitions already recorded — they stay in
+            your history as an unfinished session.
+          </p>
         </div>
       </Console>
     );
@@ -489,6 +629,27 @@ export function LiveSessionPage() {
             message={socket.error.message}
             onRetry={socket.error.recoverable ? reconnect : undefined}
           />
+        </div>
+      )}
+
+      {/*
+        Resuming a session that was already running.
+
+        Shown because the counter does NOT start at zero in this case, and a
+        patient who reconnected after their tab was backgrounded would
+        otherwise be left guessing whether the number is theirs. Only worth
+        saying while there is something to explain, so it goes once the
+        repetition count has moved past where it resumed.
+      */}
+      {resumed && repCount > 0 && repCount === (ready?.resumedFromRep ?? 0) && (
+        <div
+          role="status"
+          className="animate-cue-in mb-4 rounded-panel border border-brand-300/30 bg-brand-300/10 px-5 py-3"
+        >
+          <p className="text-sm font-medium text-brand-300">
+            Picking up where you left off — {repCount} repetition
+            {repCount === 1 ? '' : 's'} already counted and saved. Carry on.
+          </p>
         </div>
       )}
 

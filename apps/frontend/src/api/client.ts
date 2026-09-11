@@ -146,3 +146,18 @@ export function getErrorCode(error: unknown): string | null {
   }
   return null;
 }
+
+/**
+ * The structured payload attached to an error, when the endpoint sends one.
+ *
+ * Used where a failure is caused by a specific other record and the screen has
+ * to offer a way out of it - a conflicting live session the patient needs to
+ * resume or cancel. Typed by the caller, because what `details` contains is a
+ * property of the endpoint rather than of errors in general.
+ */
+export function getErrorDetails<T>(error: unknown): T | null {
+  if (axios.isAxiosError<ApiErrorBody>(error)) {
+    return (error.response?.data?.details as T | undefined) ?? null;
+  }
+  return null;
+}
