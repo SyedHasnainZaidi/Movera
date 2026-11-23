@@ -62,6 +62,27 @@ enum ExerciseGoalType {
   HOLD
 }
 
+/// Whether an exercise is performed on one side at a time, and what "side"
+/// means for it. Drives the Left/Right choice the patient makes before a
+/// session and the wording around it.
+///
+/// NONE      - both sides together, or no side at all (squat, posture).
+/// LIMB      - one arm or one leg per session (knee extension, kickback).
+/// DIRECTION - which way the movement goes (neck side bend to the left).
+/// FACING    - which side of the body faces the camera (trunk flexion): the
+///             movement is symmetrical, but the analysis reads the near side.
+enum ExerciseSideMode {
+  NONE
+  LIMB
+  DIRECTION
+  FACING
+}
+
+enum BodySide {
+  LEFT
+  RIGHT
+}
+
 /// Single-camera pose analysis is highly view-dependent. Each exercise declares
 /// the view its posture rules were written for; rules that cannot be measured
 /// from that view are not evaluated.
@@ -319,6 +340,10 @@ model Exercise {
   /// Null for REPS exercises, where sets x reps is the goal instead.
   defaultHoldSeconds Int?
 
+  /// NONE for every exercise that has no left/right choice. Anything else
+  /// requires the patient to pick a side, and each side is its own session.
+  sideMode ExerciseSideMode @default(NONE)
+
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -466,6 +491,12 @@ model ExerciseSession {
   /// Copied from the exercise at session creation, so a later library change
   /// cannot retroactively reinterpret a finished session's numbers.
   goalType ExerciseGoalType @default(REPS)
+
+  /// The side analysed, for exercises whose sideMode is not NONE; null
+  /// otherwise. Left and right are separate sessions, so each side keeps its
+  /// own repetitions, angles and report - completing one never marks the
+  /// other done.
+  side BodySide?
 
   targetSets      Int
   repsPerSet      Int

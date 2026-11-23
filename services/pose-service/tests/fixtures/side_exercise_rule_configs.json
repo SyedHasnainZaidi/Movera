@@ -1,0 +1,680 @@
+{
+  "trunk-flexion": {
+    "sideMode": "FACING",
+    "recommendedView": "SIDE",
+    "ruleConfig": {
+      "version": 1,
+      "requiredLandmarks": [
+        "nose",
+        "{side}_shoulder",
+        "{side}_hip",
+        "{side}_knee",
+        "{side}_ankle"
+      ],
+      "angleDefinitions": {
+        "trunkFlexion": {
+          "type": "signed_tilt",
+          "pivot": "{side}_hip",
+          "end": "{side}_shoulder",
+          "reference": "up",
+          "facing": [
+            "{side}_shoulder",
+            "nose"
+          ],
+          "positive": "forward"
+        },
+        "knee": {
+          "type": "joint",
+          "a": "{side}_hip",
+          "b": "{side}_knee",
+          "c": "{side}_ankle"
+        },
+        "_shoulderWidth": {
+          "type": "gap_x",
+          "a": "left_shoulder",
+          "b": "right_shoulder"
+        },
+        "_torsoLength": {
+          "type": "distance",
+          "a": "{side}_shoulder",
+          "b": "{side}_hip"
+        },
+        "_frontalRatio": {
+          "type": "ratio",
+          "numerator": "_shoulderWidth",
+          "denominator": "_torsoLength"
+        },
+        "_facingGap": {
+          "type": "confidence_gap",
+          "subject": [
+            "{side}_shoulder",
+            "{side}_hip",
+            "{side}_knee"
+          ],
+          "other": [
+            "{other}_shoulder",
+            "{other}_hip",
+            "{other}_knee"
+          ]
+        }
+      },
+      "movementStateConfig": {
+        "primaryAngle": "trunkFlexion",
+        "direction": "INCREASING",
+        "restAngle": 15,
+        "peakAngle": 45,
+        "hysteresisDeg": 6,
+        "minStateFrames": 3,
+        "cooldownMs": 800,
+        "minRepDurationMs": 1200,
+        "maxRepDurationMs": 20000,
+        "cues": {
+          "IDLE": "Stand tall, {side} side towards the camera, to begin.",
+          "UP": "Slowly bend forward from your hips.",
+          "GOING_DOWN": "Keep bending forward - move further.",
+          "DOWN": "Movement completed - now slowly return to standing.",
+          "GOING_UP": "Return to the upright starting position.",
+          "REP": "Repetition complete - stand tall before the next one."
+        }
+      },
+      "postureRules": [
+        {
+          "code": "INCOMPLETE_ROM",
+          "angle": "trunkFlexion",
+          "when": "at_peak",
+          "min": 50,
+          "joint": "trunk",
+          "message": "Move further - bend a little more forward from your hips."
+        },
+        {
+          "code": "KNEE_FLEXED",
+          "angle": "knee",
+          "when": "always",
+          "min": 150,
+          "joint": "knee",
+          "message": "Keep your knees almost straight - bend from your hips, not your knees."
+        },
+        {
+          "code": "TRUNK_LEAN",
+          "angle": "trunkFlexion",
+          "when": "always",
+          "min": -15,
+          "joint": "trunk",
+          "message": "Avoid leaning backwards - return only as far as upright."
+        },
+        {
+          "gate": true,
+          "code": "WRONG_CAMERA_VIEW",
+          "angle": "_frontalRatio",
+          "max": 0.45,
+          "message": "Incorrect camera position - stand side-on, with your {side} shoulder pointing at the camera. Counting is paused."
+        },
+        {
+          "gate": true,
+          "code": "WRONG_SIDE_FACING",
+          "angle": "_facingGap",
+          "max": 0.2,
+          "message": "Turn around - your {side} side must face the camera for the forward bend. Counting is paused."
+        }
+      ],
+      "minVisibility": 0.5,
+      "repCorrectnessThreshold": 70
+    }
+  },
+  "neck-side-bend": {
+    "sideMode": "DIRECTION",
+    "recommendedView": "FRONT",
+    "ruleConfig": {
+      "version": 1,
+      "requiredLandmarks": [
+        "nose",
+        "left_eye",
+        "right_eye",
+        "left_shoulder",
+        "right_shoulder",
+        "left_hip",
+        "right_hip"
+      ],
+      "angleDefinitions": {
+        "neckTilt": {
+          "type": "line_tilt",
+          "a": "right_eye",
+          "b": "left_eye",
+          "refA": "right_shoulder",
+          "refB": "left_shoulder",
+          "towards": "{side}"
+        },
+        "trunkTilt": {
+          "type": "vertical",
+          "upper": "mid_shoulder",
+          "lower": "mid_hip"
+        },
+        "_shoulderWidth": {
+          "type": "gap_x",
+          "a": "left_shoulder",
+          "b": "right_shoulder"
+        },
+        "_torsoLength": {
+          "type": "distance",
+          "a": "mid_shoulder",
+          "b": "mid_hip"
+        },
+        "_frontalRatio": {
+          "type": "ratio",
+          "numerator": "_shoulderWidth",
+          "denominator": "_torsoLength"
+        },
+        "_shoulderDrop": {
+          "type": "gap_y",
+          "a": "left_shoulder",
+          "b": "right_shoulder"
+        },
+        "_shoulderLevel": {
+          "type": "ratio",
+          "numerator": "_shoulderDrop",
+          "denominator": "_shoulderWidth"
+        }
+      },
+      "movementStateConfig": {
+        "primaryAngle": "neckTilt",
+        "direction": "INCREASING",
+        "restAngle": 8,
+        "peakAngle": 25,
+        "hysteresisDeg": 4,
+        "minStateFrames": 3,
+        "cooldownMs": 700,
+        "minRepDurationMs": 1000,
+        "maxRepDurationMs": 15000,
+        "cues": {
+          "IDLE": "Face the camera with your head upright to begin.",
+          "UP": "Slowly tilt your {side} ear towards your {side} shoulder.",
+          "GOING_DOWN": "Keep tilting - move further, ear towards shoulder.",
+          "DOWN": "Movement completed - now bring your head back to the centre.",
+          "GOING_UP": "Return your head to upright.",
+          "REP": "Repetition complete - head upright before the next one."
+        }
+      },
+      "postureRules": [
+        {
+          "code": "INCOMPLETE_ROM",
+          "angle": "neckTilt",
+          "when": "at_peak",
+          "min": 28,
+          "joint": "neck",
+          "message": "Move further - bring your {side} ear a little closer to your shoulder."
+        },
+        {
+          "code": "WRONG_SIDE_MOVEMENT",
+          "angle": "neckTilt",
+          "when": "always",
+          "min": -10,
+          "joint": "neck",
+          "message": "Movement detected on the wrong side - you are tilting towards your {other} shoulder. This session is for the {side} side."
+        },
+        {
+          "code": "SHOULDER_HITCH",
+          "angle": "_shoulderLevel",
+          "when": "always",
+          "max": 0.15,
+          "joint": "shoulder",
+          "message": "Keep your shoulders relaxed and level - don't lift a shoulder towards your ear."
+        },
+        {
+          "code": "TRUNK_COMPENSATION",
+          "angle": "trunkTilt",
+          "when": "always",
+          "max": 8,
+          "joint": "trunk",
+          "message": "Keep your torso upright and still - bend only your neck, not your whole body."
+        },
+        {
+          "gate": true,
+          "code": "WRONG_CAMERA_VIEW",
+          "angle": "_frontalRatio",
+          "min": 0.5,
+          "message": "Incorrect camera position - face the camera directly with both shoulders in view. Counting is paused."
+        }
+      ],
+      "minVisibility": 0.5,
+      "repCorrectnessThreshold": 70
+    }
+  },
+  "knee-extension": {
+    "sideMode": "LIMB",
+    "recommendedView": "SIDE",
+    "ruleConfig": {
+      "version": 1,
+      "requiredLandmarks": [
+        "{side}_shoulder",
+        "{side}_hip",
+        "{side}_knee",
+        "{side}_ankle"
+      ],
+      "angleDefinitions": {
+        "knee": {
+          "type": "joint",
+          "a": "{side}_hip",
+          "b": "{side}_knee",
+          "c": "{side}_ankle"
+        },
+        "thighTilt": {
+          "type": "vertical",
+          "upper": "{side}_hip",
+          "lower": "{side}_knee"
+        },
+        "trunkLean": {
+          "type": "vertical",
+          "upper": "{side}_shoulder",
+          "lower": "{side}_hip"
+        },
+        "_otherKnee": {
+          "type": "joint",
+          "a": "{other}_hip",
+          "b": "{other}_knee",
+          "c": "{other}_ankle"
+        },
+        "_shoulderWidth": {
+          "type": "gap_x",
+          "a": "left_shoulder",
+          "b": "right_shoulder"
+        },
+        "_torsoLength": {
+          "type": "distance",
+          "a": "{side}_shoulder",
+          "b": "{side}_hip"
+        },
+        "_frontalRatio": {
+          "type": "ratio",
+          "numerator": "_shoulderWidth",
+          "denominator": "_torsoLength"
+        },
+        "_facingGap": {
+          "type": "confidence_gap",
+          "subject": [
+            "{side}_shoulder",
+            "{side}_hip",
+            "{side}_knee"
+          ],
+          "other": [
+            "{other}_shoulder",
+            "{other}_hip",
+            "{other}_knee"
+          ]
+        }
+      },
+      "movementStateConfig": {
+        "primaryAngle": "knee",
+        "direction": "INCREASING",
+        "restAngle": 110,
+        "peakAngle": 155,
+        "hysteresisDeg": 8,
+        "minStateFrames": 2,
+        "cooldownMs": 600,
+        "minRepDurationMs": 900,
+        "maxRepDurationMs": 20000,
+        "cues": {
+          "IDLE": "Sit upright with your {side} knee bent to begin.",
+          "UP": "Straighten your {side} knee - lift your foot forward.",
+          "GOING_DOWN": "Keep straightening - extend your knee fully.",
+          "DOWN": "Movement completed - now lower your foot back down slowly.",
+          "GOING_UP": "Return to the starting position, knee bent.",
+          "REP": "Repetition complete."
+        }
+      },
+      "postureRules": [
+        {
+          "code": "INCOMPLETE_ROM",
+          "angle": "knee",
+          "when": "at_peak",
+          "min": 165,
+          "joint": "knee",
+          "message": "Extend your knee fully - straighten your {side} leg a little more."
+        },
+        {
+          "code": "EXCESSIVE_MOVEMENT",
+          "angle": "thighTilt",
+          "when": "always",
+          "max": 115,
+          "joint": "hip",
+          "message": "Keep your thigh resting on the chair - lift only your lower leg."
+        },
+        {
+          "code": "TRUNK_LEAN",
+          "angle": "trunkLean",
+          "when": "always",
+          "max": 25,
+          "joint": "trunk",
+          "message": "Keep your torso upright - don't lean back to lift the leg."
+        },
+        {
+          "code": "WRONG_SIDE_MOVEMENT",
+          "angle": "_otherKnee",
+          "when": "always",
+          "max": 150,
+          "joint": "knee",
+          "message": "Movement detected on the wrong side - your {other} leg is straightening. This session is for your {side} leg."
+        },
+        {
+          "gate": true,
+          "code": "WRONG_CAMERA_VIEW",
+          "angle": "_frontalRatio",
+          "max": 0.45,
+          "message": "Incorrect camera position - stand side-on, with your {side} shoulder pointing at the camera. Counting is paused."
+        },
+        {
+          "gate": true,
+          "code": "WRONG_SIDE_FACING",
+          "angle": "_facingGap",
+          "max": 0.2,
+          "message": "Turn around - your {side} side must face the camera for the {side} leg. Counting is paused."
+        }
+      ],
+      "minVisibility": 0.5,
+      "repCorrectnessThreshold": 70
+    }
+  },
+  "standing-hip-extension": {
+    "sideMode": "LIMB",
+    "recommendedView": "SIDE",
+    "ruleConfig": {
+      "version": 1,
+      "requiredLandmarks": [
+        "nose",
+        "{side}_shoulder",
+        "{side}_hip",
+        "{side}_knee",
+        "{side}_ankle"
+      ],
+      "angleDefinitions": {
+        "hipExtension": {
+          "type": "signed_tilt",
+          "pivot": "{side}_hip",
+          "end": "{side}_knee",
+          "reference": [
+            "{side}_shoulder",
+            "{side}_hip"
+          ],
+          "facing": [
+            "{side}_shoulder",
+            "nose"
+          ],
+          "positive": "backward"
+        },
+        "knee": {
+          "type": "joint",
+          "a": "{side}_hip",
+          "b": "{side}_knee",
+          "c": "{side}_ankle"
+        },
+        "trunkLean": {
+          "type": "vertical",
+          "upper": "{side}_shoulder",
+          "lower": "{side}_hip"
+        },
+        "_otherHipExtension": {
+          "type": "signed_tilt",
+          "pivot": "{other}_hip",
+          "end": "{other}_knee",
+          "reference": [
+            "{other}_shoulder",
+            "{other}_hip"
+          ],
+          "facing": [
+            "{other}_shoulder",
+            "nose"
+          ],
+          "positive": "backward"
+        },
+        "_balanceOffset": {
+          "type": "gap_x",
+          "a": "{side}_shoulder",
+          "b": "{other}_ankle"
+        },
+        "_balanceRatio": {
+          "type": "ratio",
+          "numerator": "_balanceOffset",
+          "denominator": "_torsoLength"
+        },
+        "_shoulderWidth": {
+          "type": "gap_x",
+          "a": "left_shoulder",
+          "b": "right_shoulder"
+        },
+        "_torsoLength": {
+          "type": "distance",
+          "a": "{side}_shoulder",
+          "b": "{side}_hip"
+        },
+        "_frontalRatio": {
+          "type": "ratio",
+          "numerator": "_shoulderWidth",
+          "denominator": "_torsoLength"
+        },
+        "_facingGap": {
+          "type": "confidence_gap",
+          "subject": [
+            "{side}_shoulder",
+            "{side}_hip",
+            "{side}_knee"
+          ],
+          "other": [
+            "{other}_shoulder",
+            "{other}_hip",
+            "{other}_knee"
+          ]
+        }
+      },
+      "movementStateConfig": {
+        "primaryAngle": "hipExtension",
+        "direction": "INCREASING",
+        "restAngle": 6,
+        "peakAngle": 18,
+        "hysteresisDeg": 3,
+        "minStateFrames": 3,
+        "cooldownMs": 700,
+        "minRepDurationMs": 900,
+        "maxRepDurationMs": 15000,
+        "cues": {
+          "IDLE": "Stand tall, holding support, {side} side towards the camera.",
+          "UP": "Move your {side} leg straight back, squeezing your glutes.",
+          "GOING_DOWN": "Keep extending your hip - move further back.",
+          "DOWN": "Movement completed - now bring your leg back under you slowly.",
+          "GOING_UP": "Return to the starting position, feet together.",
+          "REP": "Repetition complete."
+        }
+      },
+      "postureRules": [
+        {
+          "code": "INCOMPLETE_ROM",
+          "angle": "hipExtension",
+          "when": "at_peak",
+          "min": 20,
+          "joint": "hip",
+          "message": "Move further - take your leg a little further back."
+        },
+        {
+          "code": "TRUNK_LEAN",
+          "angle": "trunkLean",
+          "when": "always",
+          "max": 20,
+          "joint": "trunk",
+          "message": "Keep your torso upright - avoid leaning forward as your leg goes back."
+        },
+        {
+          "code": "KNEE_FLEXED",
+          "angle": "knee",
+          "when": "always",
+          "min": 130,
+          "joint": "knee",
+          "message": "Keep your {side} knee fairly straight - move from the hip, not the knee."
+        },
+        {
+          "code": "LOSS_OF_BALANCE",
+          "angle": "_balanceRatio",
+          "when": "always",
+          "max": 0.6,
+          "joint": "hip",
+          "message": "Maintain balance - keep your shoulders over your standing foot and hold your support."
+        },
+        {
+          "code": "WRONG_SIDE_MOVEMENT",
+          "angle": "_otherHipExtension",
+          "when": "always",
+          "max": 15,
+          "joint": "hip",
+          "message": "Movement detected on the wrong side - your {other} leg is moving back. This session is for your {side} leg."
+        },
+        {
+          "gate": true,
+          "code": "WRONG_CAMERA_VIEW",
+          "angle": "_frontalRatio",
+          "max": 0.45,
+          "message": "Incorrect camera position - stand side-on, with your {side} shoulder pointing at the camera. Counting is paused."
+        },
+        {
+          "gate": true,
+          "code": "WRONG_SIDE_FACING",
+          "angle": "_facingGap",
+          "max": 0.2,
+          "message": "Turn around - your {side} side must face the camera for the {side} leg. Counting is paused."
+        }
+      ],
+      "minVisibility": 0.5,
+      "repCorrectnessThreshold": 70
+    }
+  },
+  "elbow-extension": {
+    "sideMode": "LIMB",
+    "recommendedView": "SIDE",
+    "ruleConfig": {
+      "version": 1,
+      "requiredLandmarks": [
+        "{side}_shoulder",
+        "{side}_elbow",
+        "{side}_wrist",
+        "{side}_hip"
+      ],
+      "angleDefinitions": {
+        "elbow": {
+          "type": "joint",
+          "a": "{side}_shoulder",
+          "b": "{side}_elbow",
+          "c": "{side}_wrist"
+        },
+        "upperArmTilt": {
+          "type": "vertical",
+          "upper": "{side}_shoulder",
+          "lower": "{side}_elbow"
+        },
+        "trunkLean": {
+          "type": "vertical",
+          "upper": "{side}_shoulder",
+          "lower": "{side}_hip"
+        },
+        "_otherElbow": {
+          "type": "joint",
+          "a": "{other}_shoulder",
+          "b": "{other}_elbow",
+          "c": "{other}_wrist"
+        },
+        "_shoulderWidth": {
+          "type": "gap_x",
+          "a": "left_shoulder",
+          "b": "right_shoulder"
+        },
+        "_torsoLength": {
+          "type": "distance",
+          "a": "{side}_shoulder",
+          "b": "{side}_hip"
+        },
+        "_frontalRatio": {
+          "type": "ratio",
+          "numerator": "_shoulderWidth",
+          "denominator": "_torsoLength"
+        },
+        "_facingGap": {
+          "type": "confidence_gap",
+          "subject": [
+            "{side}_shoulder",
+            "{side}_hip",
+            "{side}_knee"
+          ],
+          "other": [
+            "{other}_shoulder",
+            "{other}_hip",
+            "{other}_knee"
+          ]
+        }
+      },
+      "movementStateConfig": {
+        "primaryAngle": "elbow",
+        "direction": "INCREASING",
+        "restAngle": 95,
+        "peakAngle": 155,
+        "hysteresisDeg": 8,
+        "minStateFrames": 2,
+        "cooldownMs": 500,
+        "minRepDurationMs": 700,
+        "maxRepDurationMs": 15000,
+        "cues": {
+          "IDLE": "Bend your {side} elbow, upper arm by your side, to begin.",
+          "UP": "Straighten your {side} elbow - push your hand down.",
+          "GOING_DOWN": "Keep straightening your elbow.",
+          "DOWN": "Movement completed - now bend your elbow back up slowly.",
+          "GOING_UP": "Return to the bent-elbow starting position.",
+          "REP": "Repetition complete."
+        }
+      },
+      "postureRules": [
+        {
+          "code": "INCOMPLETE_ROM",
+          "angle": "elbow",
+          "when": "at_peak",
+          "min": 165,
+          "joint": "elbow",
+          "message": "Straighten your elbow fully."
+        },
+        {
+          "code": "EXCESSIVE_MOVEMENT",
+          "angle": "upperArmTilt",
+          "when": "always",
+          "max": 30,
+          "joint": "shoulder",
+          "message": "Excessive shoulder movement - keep your upper arm still by your side and move only your forearm."
+        },
+        {
+          "code": "TRUNK_LEAN",
+          "angle": "trunkLean",
+          "when": "always",
+          "max": 15,
+          "joint": "trunk",
+          "message": "Stand tall - don't lean your body to help the arm."
+        },
+        {
+          "code": "WRONG_SIDE_MOVEMENT",
+          "angle": "_otherElbow",
+          "when": "always",
+          "min": 110,
+          "joint": "elbow",
+          "message": "Movement detected on the wrong side - your {other} arm is bending. Keep it relaxed and use your {side} arm."
+        },
+        {
+          "gate": true,
+          "code": "WRONG_CAMERA_VIEW",
+          "angle": "_frontalRatio",
+          "max": 0.45,
+          "message": "Incorrect camera position - stand side-on, with your {side} shoulder pointing at the camera. Counting is paused."
+        },
+        {
+          "gate": true,
+          "code": "WRONG_SIDE_FACING",
+          "angle": "_facingGap",
+          "max": 0.2,
+          "message": "Turn around - your {side} side must face the camera for the {side} arm. Counting is paused."
+        }
+      ],
+      "minVisibility": 0.5,
+      "repCorrectnessThreshold": 70
+    }
+  }
+}

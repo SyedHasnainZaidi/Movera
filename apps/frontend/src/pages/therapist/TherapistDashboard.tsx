@@ -14,6 +14,7 @@ import {
   StatStrip,
 } from '../../components/ui';
 import { describeAchievement } from '../../lib/prescription';
+import { withSide } from '../../lib/side';
 import { useAuthStore } from '../../stores/authStore';
 import type { TherapistDashboard as DashboardData } from '../../types/api';
 
@@ -159,7 +160,7 @@ export function TherapistDashboardPage() {
                         {session.patientName}
                       </p>
                       <p className="type-measure text-xs text-ink-500">
-                        {session.exercise} ·{' '}
+                        {withSide(session.exercise, session.side)} ·{' '}
                         {new Date(session.startedAt).toLocaleDateString()} ·{' '}
                         {describeAchievement(session)}
                       </p>

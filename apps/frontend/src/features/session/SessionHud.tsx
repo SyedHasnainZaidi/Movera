@@ -358,10 +358,18 @@ export function FeedbackBanner({
   postureCorrect,
   hasPose,
   goalType = 'REPS',
+  guidance = null,
 }: {
   error: PoseError | null;
   postureCorrect: boolean;
   hasPose: boolean;
+  /**
+   * The exercise's own cue for this phase of the movement ("Keep bending
+   * forward", "Now return upright"), from the pose service. Shown in place of
+   * the generic encouragement when nothing needs correcting; a correction
+   * always takes priority over it.
+   */
+  guidance?: string | null;
   /**
    * Changes the encouragement, not the corrections. "Keep going" is the wrong
    * instruction for an exercise whose whole task is to stay still.
@@ -382,9 +390,11 @@ export function FeedbackBanner({
     const message =
       goalType === 'HOLD'
         ? 'Good alignment - hold it there.'
-        : postureCorrect
-          ? 'Good form - keep going.'
-          : 'Keep going.';
+        : guidance
+          ? guidance
+          : postureCorrect
+            ? 'Good form - keep going.'
+            : 'Keep going.';
     return (
       <div
         key={message}

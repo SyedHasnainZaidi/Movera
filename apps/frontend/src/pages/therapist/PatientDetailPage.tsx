@@ -17,6 +17,7 @@ import {
   describeAchievement,
   describePrescription,
 } from '../../lib/prescription';
+import { withSide } from '../../lib/side';
 import type {
   Assignment,
   ExerciseGoalType,
@@ -170,7 +171,7 @@ export function PatientDetailPage() {
               >
                 <div>
                   <p className="text-sm font-medium text-ink-900">
-                    {session.exercise.name}
+                    {withSide(session.exercise.name, session.side)}
                   </p>
                   <p className="text-xs text-ink-500">
                     {new Date(session.startedAt).toLocaleString()} ·{' '}

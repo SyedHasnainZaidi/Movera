@@ -38,7 +38,7 @@ export class SessionsController {
       'service confirms an analyzer is attached and the patient is visible.',
   })
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateSessionDto) {
-    return this.sessions.create(user, dto.assignmentId);
+    return this.sessions.create(user, dto.assignmentId, dto.side);
   }
 
   @Roles(UserRole.PATIENT)

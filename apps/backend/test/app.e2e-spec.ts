@@ -2089,4 +2089,280 @@ describe('Physiotherapy platform (e2e)', () => {
         .expect(400);
     });
   });
+  // =====================================================================
+  describe('Side-specific exercises', () => {
+    const SIDE_SLUGS = [
+      'trunk-flexion',
+      'neck-side-bend',
+      'knee-extension',
+      'standing-hip-extension',
+      'elbow-extension',
+    ];
+
+    let patientToken: string;
+    let kneeAssignmentId: string;
+    let squatAssignmentId: string;
+
+    const ok = (res: request.Response) => {
+      if (res.status >= 300) throw new Error(JSON.stringify(res.body));
+    };
+
+    beforeAll(async () => {
+      // A patient of their own: "one live session per patient" must not be
+      // affected by sessions other blocks leave running on patient A.
+      const patient = await registerUser('PATIENT');
+      patientToken = patient.body.accessToken;
+      const invite = await request(server)
+        .post('/api/v1/patients/me/link-invites')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .expect(201);
+      await request(server)
+        .post('/api/v1/therapists/me/patients/link')
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .send({ inviteCode: invite.body.code })
+        .expect(201);
+
+      const profileId = patient.body.user.patientProfileId;
+      const plan = await request(server)
+        .post('/api/v1/rehabilitation-plans')
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .send({
+          patientId: profileId,
+          title: 'Side-specific plan',
+          goals: 'Restore single-leg strength, one side at a time.',
+          startDate: new Date().toISOString().slice(0, 10),
+        })
+        .expect(201);
+
+      const exercises = await request(server)
+        .get('/api/v1/exercises')
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .expect(200);
+      const bySlug = (slug: string) =>
+        exercises.body.find((e: { slug: string }) => e.slug === slug);
+
+      const assign = async (slug: string) =>
+        (
+          await request(server)
+            .post('/api/v1/assignments')
+            .set('Authorization', `Bearer ${therapistToken}`)
+            .send({
+              patientId: profileId,
+              planId: plan.body.id,
+              exerciseId: bySlug(slug).id,
+              targetSets: 1,
+              repsPerSet: 5,
+              startDate: new Date().toISOString().slice(0, 10),
+            })
+            .expect(201)
+        ).body.id as string;
+
+      kneeAssignmentId = await assign('knee-extension');
+      squatAssignmentId = await assign('squat');
+    }, 120_000);
+
+    it('lists all five exercises as analysable and side-specific', async () => {
+      const response = await request(server)
+        .get('/api/v1/exercises')
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .expect(200);
+      for (const slug of SIDE_SLUGS) {
+        const exercise = response.body.find(
+          (e: { slug: string }) => e.slug === slug,
+        );
+        expect(exercise).toBeDefined();
+        expect(exercise.analysisAvailable).toBe(true);
+        expect(exercise.sideMode).not.toBe('NONE');
+      }
+      const squat = response.body.find(
+        (e: { slug: string }) => e.slug === 'squat',
+      );
+      expect(squat.sideMode).toBe('NONE');
+    });
+
+    it('refuses to start a side-specific session without a side', async () => {
+      const response = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .send({ assignmentId: kneeAssignmentId })
+        .expect(400);
+      expect(response.body.code).toBe('SESSION_SIDE_REQUIRED');
+    });
+
+    it('refuses a side for an exercise that has none', async () => {
+      const response = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .send({ assignmentId: squatAssignmentId, side: 'LEFT' })
+        .expect(400);
+      expect(response.body.code).toBe('SESSION_SIDE_NOT_APPLICABLE');
+    });
+
+    it('refuses a side value that is not LEFT or RIGHT', async () => {
+      await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .send({ assignmentId: kneeAssignmentId, side: 'BOTH' })
+        .expect(400);
+    });
+
+    it('keeps left and right as separate sessions, end to end', async () => {
+      const left = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .send({ assignmentId: kneeAssignmentId, side: 'LEFT' })
+        .expect(201);
+      expect(left.body.side).toBe('LEFT');
+      expect(left.body.exercise.sideMode).toBe('LIMB');
+
+      // The pose service learns the side from the backend, never the browser.
+      const context = await request(server)
+        .get(`/api/v1/internal/sessions/${left.body.id}/analyzer-context`)
+        .set('X-Internal-Token', internalToken)
+        .expect(200);
+      expect(context.body.side).toBe('LEFT');
+      expect(JSON.stringify(context.body.ruleConfig)).toContain('{side}_knee');
+
+      // Same side again: the live session is resumed, not duplicated.
+      const again = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .send({ assignmentId: kneeAssignmentId, side: 'LEFT' })
+        .expect(201);
+      expect(again.body.id).toBe(left.body.id);
+      expect(again.body.resumed).toBe(true);
+
+      // The OTHER side is not "the same exercise": it must not resume the
+      // left-leg session and count right-leg repetitions into it.
+      const right = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .send({ assignmentId: kneeAssignmentId, side: 'RIGHT' })
+        .expect(409);
+      expect(right.body.code).toBe('SESSION_ALREADY_LIVE');
+      expect(right.body.details.side).toBe('LEFT');
+
+      // Record one left repetition and finish the left session.
+      await request(server)
+        .post(`/api/v1/internal/sessions/${left.body.id}/activate`)
+        .set('X-Internal-Token', internalToken)
+        .expect(ok);
+      const now = Date.now();
+      await request(server)
+        .post(`/api/v1/internal/sessions/${left.body.id}/reps`)
+        .set('X-Internal-Token', internalToken)
+        .send({
+          ingestKey: `${left.body.id}:1`,
+          repNumber: 1,
+          setNumber: 1,
+          correct: true,
+          startedAt: new Date(now - 2000).toISOString(),
+          completedAt: new Date(now).toISOString(),
+          score: 90,
+          trackingConfidence: 0.9,
+          angleSummary: { knee: { min: 92, max: 171, mean: 130 } },
+          errors: [{ code: 'INCOMPLETE_ROM', occurrences: 2 }],
+        })
+        .expect(ok);
+      await request(server)
+        .post(`/api/v1/sessions/${left.body.id}/complete`)
+        .set('Authorization', `Bearer ${patientToken}`)
+        .expect(ok);
+
+      // Now the right side can start - as its own, new session.
+      const rightNow = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .send({ assignmentId: kneeAssignmentId, side: 'RIGHT' })
+        .expect(201);
+      expect(rightNow.body.id).not.toBe(left.body.id);
+      expect(rightNow.body.side).toBe('RIGHT');
+      expect(rightNow.body.resumed).toBe(false);
+
+      // Completing the left side did not complete the right one.
+      const detail = await request(server)
+        .get(`/api/v1/assignments/${kneeAssignmentId}`)
+        .set('Authorization', `Bearer ${patientToken}`)
+        .expect(200);
+      expect(detail.body.completedSessionsBySide).toEqual({ LEFT: 1, RIGHT: 0 });
+      expect(detail.body.exerciseDetail.sideMode).toBe('LIMB');
+
+      // The side is shown wherever the session is: history, report, progress
+      // and the therapist's dashboard.
+      const history = await request(server)
+        .get('/api/v1/patients/me/sessions')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .expect(200);
+      const leftRow = history.body.data.find(
+        (s: { id: string }) => s.id === left.body.id,
+      );
+      expect(leftRow.side).toBe('LEFT');
+
+      const report = await request(server)
+        .get(`/api/v1/sessions/${left.body.id}/report`)
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .expect(200);
+      expect(report.body.side).toBe('LEFT');
+      expect(report.body.results.totalReps).toBe(1);
+
+      const progress = await request(server)
+        .get('/api/v1/patients/me/progress')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .expect(200);
+      const kneeRows = progress.body.byExercise.filter(
+        (e: { slug: string }) => e.slug === 'knee-extension',
+      );
+      expect(kneeRows).toHaveLength(1);
+      expect(kneeRows[0].side).toBe('LEFT');
+
+      const dashboard = await request(server)
+        .get('/api/v1/therapists/me/dashboard')
+        .set('Authorization', `Bearer ${therapistToken}`)
+        .expect(200);
+      const dashRow = dashboard.body.recentSessions.find(
+        (s: { sessionId: string }) => s.sessionId === left.body.id,
+      );
+      expect(dashRow.side).toBe('LEFT');
+
+      await request(server)
+        .post(`/api/v1/sessions/${rightNow.body.id}/cancel`)
+        .set('Authorization', `Bearer ${patientToken}`);
+    });
+
+    it('accepts the new feedback codes on ingest', async () => {
+      const session = await request(server)
+        .post('/api/v1/sessions')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .send({ assignmentId: kneeAssignmentId, side: 'RIGHT' })
+        .expect(201);
+      await request(server)
+        .post(`/api/v1/internal/sessions/${session.body.id}/activate`)
+        .set('X-Internal-Token', internalToken)
+        .expect(ok);
+      const now = Date.now();
+      await request(server)
+        .post(`/api/v1/internal/sessions/${session.body.id}/reps`)
+        .set('X-Internal-Token', internalToken)
+        .send({
+          ingestKey: `${session.body.id}:1`,
+          repNumber: 1,
+          setNumber: 1,
+          correct: false,
+          startedAt: new Date(now - 2000).toISOString(),
+          completedAt: new Date(now).toISOString(),
+          score: 60,
+          trackingConfidence: 0.8,
+          angleSummary: { knee: { min: 90, max: 160, mean: 125 } },
+          errors: [
+            { code: 'WRONG_SIDE_MOVEMENT', occurrences: 1 },
+            { code: 'EXCESSIVE_MOVEMENT', occurrences: 3 },
+            { code: 'LOSS_OF_BALANCE', occurrences: 1 },
+          ],
+        })
+        .expect(ok);
+      await request(server)
+        .post(`/api/v1/sessions/${session.body.id}/cancel`)
+        .set('Authorization', `Bearer ${patientToken}`);
+    });
+  });
 });

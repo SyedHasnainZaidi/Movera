@@ -40,6 +40,12 @@ export const KNOWN_ERROR_CODES = new Set([
   'SHOULDER_ALIGNMENT',
   'HIP_ALIGNMENT',
   'SPINE_ALIGNMENT',
+  // side-specific exercises
+  'WRONG_CAMERA_VIEW',
+  'WRONG_SIDE_FACING',
+  'WRONG_SIDE_MOVEMENT',
+  'LOSS_OF_BALANCE',
+  'EXCESSIVE_MOVEMENT',
 ]);
 
 const SEVERITY_BY_CODE: Record<string, Severity> = {
@@ -62,6 +68,11 @@ const SEVERITY_BY_CODE: Record<string, Severity> = {
   SHOULDER_ALIGNMENT: Severity.WARNING,
   HIP_ALIGNMENT: Severity.WARNING,
   SPINE_ALIGNMENT: Severity.WARNING,
+  WRONG_CAMERA_VIEW: Severity.CRITICAL,
+  WRONG_SIDE_FACING: Severity.CRITICAL,
+  WRONG_SIDE_MOVEMENT: Severity.WARNING,
+  LOSS_OF_BALANCE: Severity.WARNING,
+  EXCESSIVE_MOVEMENT: Severity.WARNING,
 };
 
 @Injectable()
@@ -142,6 +153,10 @@ export class InternalService {
       // instead of restarting the patient at zero - the same guarantee
       // currentPersistedRepCount gives repetitions.
       currentHeldSec: session.heldSec ?? 0,
+      // The side the patient chose when the session was created. The pose
+      // service substitutes it into the rule config; it never takes a side
+      // from the browser.
+      side: session.side,
       ruleConfig: {
         requiredLandmarks: ruleConfig.requiredLandmarks,
         angleDefinitions: ruleConfig.angleDefinitions,

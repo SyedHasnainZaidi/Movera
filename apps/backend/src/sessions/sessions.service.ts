@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   AssignmentStatus,
+  BodySide,
   ExerciseGoalType,
+  ExerciseSideMode,
   NotificationType,
   Prisma,
   SessionStatus,
@@ -53,7 +55,7 @@ export class SessionsService {
    * exercise, sets, reps, rule version - is captured HERE from the database.
    * The browser supplies only an assignment id.
    */
-  async create(user: AuthUser, assignmentId: string) {
+  async create(user: AuthUser, assignmentId: string, side?: BodySide) {
     const patientProfileId = this.access.requirePatientProfileId(user);
 
     const assignment = await this.prisma.exerciseAssignment.findUnique({
@@ -106,6 +108,26 @@ export class SessionsService {
       );
     }
 
+    // Side. A side-specific exercise cannot be analysed without one - its
+    // rule config names "{side}_knee", not a real joint - so it is refused
+    // rather than defaulted: guessing a side would silently track the wrong
+    // limb. Equally, a side sent for an exercise that has none is a client
+    // bug and is refused rather than stored as misleading data.
+    const sided = assignment.exercise.sideMode !== ExerciseSideMode.NONE;
+    if (sided && !side) {
+      throw AppError.badRequest(
+        AppErrorCode.SESSION_SIDE_REQUIRED,
+        'Choose the left or right side before starting this exercise.',
+      );
+    }
+    if (!sided && side) {
+      throw AppError.badRequest(
+        AppErrorCode.SESSION_SIDE_NOT_APPLICABLE,
+        'This exercise is not performed one side at a time.',
+      );
+    }
+    const sessionSide = sided ? (side ?? null) : null;
+
     // Clear any stranded finalization BEFORE looking for a blocker, so a row
     // that is only nominally live cannot refuse the patient a session. Done
     // here rather than left to the sweep because the sweep runs every five
@@ -122,6 +144,7 @@ export class SessionsService {
         status: true,
         startedAt: true,
         assignmentId: true,
+        side: true,
         exercise: { select: { name: true } },
       },
     });
@@ -142,8 +165,15 @@ export class SessionsService {
       //
       // FINALIZING is excluded deliberately: that session is mid-completion,
       // and handing it back as resumable would race the finalizer.
+      //
+      // The SIDE must match too. A live left-leg session is not "the same
+      // exercise" as a right-leg one: resuming it would count right-leg
+      // repetitions into the left leg's record. It falls through to the
+      // conflict below instead, which names the side so the patient can
+      // finish or cancel it.
       if (
         existing.assignmentId === assignmentId &&
+        existing.side === sessionSide &&
         existing.status !== SessionStatus.FINALIZING
       ) {
         const resumed = await this.prisma.exerciseSession.findUniqueOrThrow({
@@ -172,13 +202,17 @@ export class SessionsService {
         // 3. A genuinely different exercise is in progress. Still refused -
         //    but the client is told WHICH session, so it can offer to resume
         //    or cancel it instead of leaving the patient at a dead end.
+        const existingLabel = existing.side
+          ? `${existing.exercise.name} (${existing.side.toLowerCase()} side)`
+          : existing.exercise.name;
         throw AppError.conflict(
           AppErrorCode.SESSION_ALREADY_LIVE,
-          `You have a session in progress on ${existing.exercise.name}. Finish or cancel it before starting another.`,
+          `You have a session in progress on ${existingLabel}. Finish or cancel it before starting another.`,
           {
             sessionId: existing.id,
             assignmentId: existing.assignmentId,
-            exerciseName: existing.exercise.name,
+            exerciseName: existingLabel,
+            side: existing.side,
             status: existing.status,
             startedAt: existing.startedAt.toISOString(),
           },
@@ -209,6 +243,7 @@ export class SessionsService {
         ruleConfigVersion: ruleConfig.version,
         status: SessionStatus.CREATED,
         goalType,
+        side: sessionSide,
         targetSets: assignment.targetSets,
         repsPerSet: assignment.repsPerSet,
         targetTotalReps,
@@ -219,7 +254,7 @@ export class SessionsService {
     });
 
     this.logger.log(
-      `Session ${session.id} created for patient ${patientProfileId} (${assignment.exercise.slug})`,
+      `Session ${session.id} created for patient ${patientProfileId} (${assignment.exercise.slug}${sessionSide ? `, ${sessionSide}` : ''})`,
     );
 
     return this.toCreatedDto(session, false);
@@ -312,7 +347,9 @@ export class SessionsService {
         instructions: session.exercise.instructions,
         recommendedView: session.exercise.recommendedView,
         framingInstructions: session.exercise.framingInstructions,
+        sideMode: session.exercise.sideMode,
       },
+      side: session.side,
       goalType: session.goalType,
       targetSets: session.targetSets,
       repsPerSet: session.repsPerSet,
@@ -385,6 +422,7 @@ export class SessionsService {
       status: session.status,
       exercise: session.exercise,
       goalType: session.goalType,
+      side: session.side,
       targetSets: session.targetSets,
       repsPerSet: session.repsPerSet,
       targetTotalReps: session.targetTotalReps,
@@ -620,6 +658,7 @@ export class SessionsService {
         status: s.status,
         exercise: s.exercise,
         goalType: s.goalType,
+        side: s.side,
         startedAt: s.startedAt.toISOString(),
         endedAt: s.endedAt?.toISOString() ?? null,
         durationSec: s.durationSec,

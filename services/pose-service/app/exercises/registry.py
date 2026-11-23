@@ -37,6 +37,14 @@ SUPPORTED_SLUGS: frozenset[str] = frozenset(
         "shoulder-abduction",
         "straight-leg-raise",
         "static-posture",
+        # Side-specific exercises added later. Same BaseExerciseAnalyzer, same
+        # state machine; the left/right choice is substituted into their rule
+        # configs when the session starts (see base._apply_side).
+        "trunk-flexion",
+        "neck-side-bend",
+        "knee-extension",
+        "standing-hip-extension",
+        "elbow-extension",
     }
 )
 

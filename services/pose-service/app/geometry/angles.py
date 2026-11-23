@@ -180,6 +180,136 @@ def vertical_distance(
     return value if math.isfinite(value) else None
 
 
+def euclidean_distance(
+    a: Optional[Keypoint],
+    b: Optional[Keypoint],
+) -> Optional[float]:
+    """Straight-line separation, in frame pixels.
+
+    Used as a body-size yardstick (e.g. torso length) so that view checks can
+    be written as ratios that do not depend on how far the patient stands from
+    the camera.
+    """
+    if a is None or b is None:
+        return None
+    value = math.hypot(a.x - b.x, a.y - b.y)
+    return value if math.isfinite(value) else None
+
+
+#: Reference directions for `signed_sagittal_angle`, in image coordinates.
+VERTICAL_UP = (0.0, -1.0)
+VERTICAL_DOWN = (0.0, 1.0)
+
+
+def signed_sagittal_angle(
+    pivot: Optional[Keypoint],
+    end: Optional[Keypoint],
+    reference: Optional[tuple[float, float]],
+    facing_from: Optional[Keypoint],
+    facing_to: Optional[Keypoint],
+) -> Optional[float]:
+    """Signed angle of the segment ``pivot -> end`` away from ``reference``.
+
+    POSITIVE means the segment has rotated towards the direction the patient
+    is FACING; negative means it has rotated behind them. Range (-180, 180].
+
+    Why signed. A plain angle from vertical cannot tell a forward bend from a
+    backward lean, or a hip kicking back from a leg swinging forward - both
+    read as "20 degrees from vertical". For trunk flexion and hip extension
+    the direction IS the exercise, so it has to be part of the measurement.
+
+    Which way is forward. Side-on, the patient may face either edge of the
+    picture. The direction is read from the body itself: ``facing_from ->
+    facing_to`` (shoulder -> nose) points the way the face is pointing, so the
+    measurement works whichever way the patient stands.
+
+    ``reference`` is a direction vector, e.g. VERTICAL_UP for a trunk, or the
+    shoulder -> hip direction for a thigh measured against the trunk line.
+    """
+    if (
+        pivot is None
+        or end is None
+        or reference is None
+        or facing_from is None
+        or facing_to is None
+    ):
+        return None
+
+    vp, ve = _as_vector(pivot), _as_vector(end)
+    vf0, vf1 = _as_vector(facing_from), _as_vector(facing_to)
+    if vp is None or ve is None or vf0 is None or vf1 is None:
+        return None
+
+    segment = ve - vp
+    ref = np.asarray(reference, dtype=np.float64)
+    if (
+        float(np.linalg.norm(segment)) < _MIN_VECTOR_NORM
+        or float(np.linalg.norm(ref)) < _MIN_VECTOR_NORM
+    ):
+        return None
+
+    facing_dx = float(vf1[0] - vf0[0])
+    # Facing straight at or away from the camera: there is no sagittal
+    # direction to speak of, so the measurement is not meaningful.
+    if abs(facing_dx) < 1.0:
+        return None
+    facing_sign = 1.0 if facing_dx > 0 else -1.0
+
+    # The perpendicular to the reference that points the way the patient
+    # faces. Projecting the segment onto (reference, forward) gives the signed
+    # angle directly through atan2.
+    forward = np.array((-ref[1], ref[0]))
+    if forward[0] * facing_sign < 0:
+        forward = -forward
+
+    degrees = math.degrees(
+        math.atan2(float(np.dot(segment, forward)), float(np.dot(segment, ref)))
+    )
+    return degrees if math.isfinite(degrees) else None
+
+
+def line_tilt(
+    a: Optional[Keypoint],
+    b: Optional[Keypoint],
+    ref_a: Optional[Keypoint],
+    ref_b: Optional[Keypoint],
+) -> Optional[float]:
+    """Signed tilt of the line ``a -> b`` relative to the line ``ref_a -> ref_b``.
+
+    Degrees in (-180, 180]. Positive means ``b`` has dropped (moved down the
+    image) relative to the reference line.
+
+    Built for neck lateral flexion seen from the front: with a = right eye,
+    b = left eye and the shoulder line as reference, tipping the head towards
+    the LEFT shoulder lowers the left eye and gives a positive value. Measuring
+    against the shoulder line rather than the horizontal means that leaning
+    the whole body does not read as a neck movement - both lines tilt together
+    and the difference stays near zero.
+    """
+    if a is None or b is None or ref_a is None or ref_b is None:
+        return None
+    va, vb, vra, vrb = (_as_vector(p) for p in (a, b, ref_a, ref_b))
+    if va is None or vb is None or vra is None or vrb is None:
+        return None
+
+    line = vb - va
+    ref = vrb - vra
+    if (
+        float(np.linalg.norm(line)) < _MIN_VECTOR_NORM
+        or float(np.linalg.norm(ref)) < _MIN_VECTOR_NORM
+    ):
+        return None
+
+    difference = math.degrees(
+        math.atan2(line[1], line[0]) - math.atan2(ref[1], ref[0])
+    )
+    # Normalise into (-180, 180].
+    difference = (difference + 180.0) % 360.0 - 180.0
+    if difference == -180.0:
+        difference = 180.0
+    return difference if math.isfinite(difference) else None
+
+
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 

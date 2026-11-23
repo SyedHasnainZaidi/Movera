@@ -544,6 +544,7 @@ export class TherapistsService {
         // session - describing a completed exercise as a total failure,
         // because a held session records no repetitions by design.
         goalType: s.goalType,
+        side: s.side,
         totalReps: s.totalReps,
         targetTotalReps: s.targetTotalReps,
         heldSec: s.heldSec,

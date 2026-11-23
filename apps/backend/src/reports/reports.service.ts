@@ -300,6 +300,7 @@ export class ReportsService {
       // session carries sets and reps only because the columns are NOT NULL;
       // they describe nothing that happened.
       goalType: session.goalType,
+      side: session.side,
       prescription: {
         targetSets: session.targetSets,
         repsPerSet: session.repsPerSet,

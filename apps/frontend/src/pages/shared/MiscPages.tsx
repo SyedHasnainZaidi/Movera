@@ -15,8 +15,10 @@ import {
   RowArrow,
 } from '../../components/ui';
 import { describeAchievement } from '../../lib/prescription';
+import { isSided, withSide } from '../../lib/side';
 import type {
   AppNotification,
+  ExerciseSideMode,
   Page,
   SessionSummary,
 } from '../../types/api';
@@ -71,7 +73,7 @@ export function SessionHistoryPage() {
                   <div>
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-semibold text-ink-900">
-                        {session.exercise.name}
+                        {withSide(session.exercise.name, session.side)}
                       </p>
                       {session.status === 'CANCELLED' && (
                         <Badge tone="neutral">Cancelled</Badge>
@@ -233,6 +235,7 @@ interface LibraryExercise {
   defaultReps: number;
   isActive: boolean;
   analysisAvailable: boolean;
+  sideMode?: ExerciseSideMode;
 }
 
 /** The system-managed exercise catalogue. */
@@ -289,6 +292,9 @@ export function ExerciseLibraryPage() {
                   <Badge tone="neutral">
                     {exercise.recommendedView.toLowerCase().replace('_', ' ')} view
                   </Badge>
+                  {isSided(exercise.sideMode) && (
+                    <Badge tone="neutral">Left / right sessions</Badge>
+                  )}
                 </div>
                 <p className="mt-2 text-sm leading-relaxed text-ink-600">
                   {exercise.description}

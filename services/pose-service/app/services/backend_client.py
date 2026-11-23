@@ -58,6 +58,9 @@ class AnalyzerContext:
     #: already credited (non-zero when resuming a dropped session).
     target_hold_sec: float = 0.0
     current_held_seconds: float = 0.0
+    #: "LEFT" / "RIGHT" for a side-specific session, chosen by the patient and
+    #: stored on the session row; None for exercises without a side.
+    side: Optional[str] = None
 
     @property
     def counts_reps(self) -> bool:
@@ -83,6 +86,7 @@ class AnalyzerContext:
             goal_type=str(payload.get("goalType", "REPS")),
             target_hold_sec=float(payload.get("targetHoldSec") or 0.0),
             current_held_seconds=float(payload.get("currentHeldSec") or 0.0),
+            side=str(payload["side"]) if payload.get("side") else None,
         )
 
 

@@ -11,6 +11,13 @@
 export type UserRole = 'PATIENT' | 'THERAPIST' | 'ADMIN';
 export type Difficulty = 'EASY' | 'MEDIUM' | 'HARD';
 export type CameraView = 'FRONT' | 'SIDE' | 'FRONT_OBLIQUE';
+/**
+ * Whether an exercise is done one side at a time, and what the side means:
+ * LIMB - which arm or leg; DIRECTION - which way to bend; FACING - which side
+ * of the body faces the camera. NONE - no side choice.
+ */
+export type ExerciseSideMode = 'NONE' | 'LIMB' | 'DIRECTION' | 'FACING';
+export type BodySide = 'LEFT' | 'RIGHT';
 export type SessionStatus =
   | 'CREATED'
   | 'ACTIVE'
@@ -56,6 +63,8 @@ export interface ExerciseSummary {
   difficulty?: Difficulty;
   targetBodyArea?: string;
   recommendedView?: CameraView;
+  /** Optional only on responses that predate the field; absent = NONE. */
+  sideMode?: ExerciseSideMode;
 }
 
 export type PlanStatus = 'DRAFT' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
@@ -125,9 +134,12 @@ export interface AssignmentDetail extends Assignment {
     framingInstructions: string;
     targetBodyArea: string;
     goalType: ExerciseGoalType;
+    sideMode?: ExerciseSideMode;
   };
   therapistName: string;
   completedSessions: number;
+  /** Completed sessions per side, for side-specific exercises. */
+  completedSessionsBySide?: Record<BodySide, number>;
 }
 
 export interface SessionSummary {
@@ -148,6 +160,8 @@ export interface SessionSummary {
   /** HOLD only. A history row showing "0 of 1 reps" would read as a failure. */
   heldSec?: number | null;
   targetHoldSec?: number | null;
+  /** The side performed, for side-specific exercises; else null/absent. */
+  side?: BodySide | null;
 }
 
 export interface CreatedSession {
@@ -167,7 +181,9 @@ export interface CreatedSession {
     instructions: string;
     recommendedView: CameraView;
     framingInstructions: string;
+    sideMode?: ExerciseSideMode;
   };
+  side?: BodySide | null;
   goalType: ExerciseGoalType;
   targetSets: number;
   repsPerSet: number;
@@ -215,6 +231,7 @@ export interface TherapistDashboard {
     exercise: string;
     startedAt: string;
     goalType: ExerciseGoalType | null;
+    side?: BodySide | null;
     totalReps: number;
     targetTotalReps: number;
     heldSec: number | null;
@@ -259,6 +276,8 @@ export interface SessionReport {
   durationSec: number;
   /** Decides whether `prescription` or `hold` describes what was asked for. */
   goalType: ExerciseGoalType;
+  /** The side performed, for side-specific exercises; else null/absent. */
+  side?: BodySide | null;
   prescription: {
     targetSets: number;
     repsPerSet: number;
@@ -300,6 +319,7 @@ export interface ProgressData {
     date: string;
     exercise: string;
     exerciseSlug: string;
+    side?: BodySide | null;
     performanceScore: number;
     totalReps: number;
     correctReps: number;
@@ -307,7 +327,10 @@ export interface ProgressData {
     completionRatio: number;
   }[];
   byExercise: {
+    /** Unique per exercise AND side - left and right are listed separately. */
+    key?: string;
     slug: string;
+    side?: BodySide | null;
     name: string;
     sessions: number;
     averageScore: number | null;
@@ -414,6 +437,12 @@ export interface PoseUpdateData {
   hold: HoldProgress | null;
   posture: { correct: boolean; score: number };
   errors: PoseError[];
+  /**
+   * Exercise-specific cue for where the patient is in the repetition
+   * ("Keep bending forward", "Now return upright"). Null when the exercise
+   * defines no cues or counting is paused.
+   */
+  guidance?: string | null;
   latencyMs: {
     decode: number;
     inference: number;
@@ -451,6 +480,8 @@ export interface SessionReadyData {
   goalType: ExerciseGoalType;
   targetHoldSeconds: number;
   resumedFromHeldSeconds: number;
+  /** The side being analysed, for side-specific exercises. */
+  side?: BodySide | null;
 }
 
 /** Sent once, when the pose service decides the session is finished. */

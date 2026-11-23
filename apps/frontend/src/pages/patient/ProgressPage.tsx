@@ -19,6 +19,7 @@ import {
   PageHeader,
   StatStrip,
 } from '../../components/ui';
+import { withSide } from '../../lib/side';
 import { useThemeStore } from '../../stores/themeStore';
 import type { ProgressData } from '../../types/api';
 
@@ -261,12 +262,12 @@ export function ProgressPage({ patientId }: { patientId?: string }) {
             <div className="divide-y divide-ink-100">
               {data.byExercise.map((exercise) => (
                 <div
-                  key={exercise.slug}
+                  key={exercise.key ?? exercise.slug}
                   className="flex items-center justify-between gap-3 px-5 py-3"
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-ink-900">
-                      {exercise.name}
+                      {withSide(exercise.name, exercise.side)}
                     </p>
                     <p className="type-measure text-xs text-ink-500">
                       {exercise.sessions} session

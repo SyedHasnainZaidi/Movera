@@ -24,10 +24,19 @@ import {
   TrackingQuality,
 } from '../../features/session/SessionHud';
 import { formatSeconds } from '../../lib/prescription';
+import {
+  BODY_SIDES,
+  isSided,
+  sideExplanation,
+  sideOptionLabel,
+  sideQuestion,
+  withSide,
+} from '../../lib/side';
 import { useFrameSampler } from '../../features/session/useFrameSampler';
 import { usePoseSocket } from '../../features/session/usePoseSocket';
 import type {
   AssignmentDetail,
+  BodySide,
   CreatedSession,
   ExerciseGoalType,
   PoseError,
@@ -86,6 +95,10 @@ export function LiveSessionPage() {
 
   const [phase, setPhase] = useState<Phase>('setup');
   const [assignment, setAssignment] = useState<AssignmentDetail | null>(null);
+  //: Side-specific exercises only: the side the patient chose on the setup
+  //: screen. Sent with POST /sessions; the server, not the browser, then
+  //: decides which landmarks are analysed.
+  const [side, setSide] = useState<BodySide | null>(null);
   const [session, setSession] = useState<CreatedSession | null>(null);
   const [ready, setReady] = useState<SessionReadyData | null>(null);
   const [pose, setPose] = useState<PoseUpdateData | null>(null);
@@ -286,6 +299,7 @@ export function LiveSessionPage() {
     try {
       const { data: created } = await api.post<CreatedSession>('/sessions', {
         assignmentId,
+        ...(side ? { side } : {}),
       });
       setSession(created);
       setResumed(created.resumed === true);
@@ -485,6 +499,12 @@ export function LiveSessionPage() {
   const isHold = goalType === 'HOLD';
   const targetHoldSeconds =
     ready?.targetHoldSeconds ?? assignment.holdSeconds ?? 0;
+  const sideMode = detail.sideMode ?? 'NONE';
+  const needsSide = isSided(sideMode);
+  // The session's own side wins once it exists: a resumed session keeps the
+  // side it was started with, whatever the setup screen last showed.
+  const activeSide = session?.side ?? ready?.side ?? side;
+  const title = withSide(detail.name, activeSide);
 
   // ---- setup screen ----
   if (phase === 'setup' || phase === 'camera') {
@@ -493,7 +513,7 @@ export function LiveSessionPage() {
         <div className="mx-auto max-w-3xl px-4 py-8">
           <div className="reveal">
             <h1 className="type-display text-[28px] leading-tight text-white">
-              {detail.name}
+              {title}
             </h1>
             <p className="type-measure mt-1 text-sm text-stage-300">
               {isHold ? (
@@ -533,12 +553,59 @@ export function LiveSessionPage() {
               )}
             </li>
 
+            {needsSide && (
+              <li
+                className="reveal rounded-panel border border-white/10 bg-white/[0.04] p-5"
+                style={{ ['--reveal-index' as string]: 2 }}
+              >
+                <StepHeading step={2} title={sideQuestion(sideMode)} />
+                <div
+                  className="mt-3 flex flex-wrap gap-2"
+                  role="radiogroup"
+                  aria-label={sideQuestion(sideMode)}
+                >
+                  {BODY_SIDES.map((option) => {
+                    const selected = side === option;
+                    const done =
+                      assignment.completedSessionsBySide?.[option] ?? 0;
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        // Locked once the camera step begins: the side is
+                        // part of the session about to be created.
+                        disabled={phase !== 'setup'}
+                        onClick={() => setSide(option)}
+                        className={`rounded-panel border px-4 py-2.5 text-left text-sm transition-colors disabled:cursor-not-allowed ${
+                          selected
+                            ? 'border-brand-400 bg-brand-400/15 text-white'
+                            : 'border-white/15 bg-white/[0.03] text-stage-200 hover:border-white/30'
+                        }`}
+                      >
+                        <span className="block font-medium">
+                          {sideOptionLabel(sideMode, option)}
+                        </span>
+                        <span className="type-measure block text-xs text-stage-400">
+                          {done} completed session{done === 1 ? '' : 's'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-3 text-sm leading-relaxed text-stage-300">
+                  {sideExplanation(sideMode)}
+                </p>
+              </li>
+            )}
+
             <li
               className="reveal rounded-panel border border-white/10 bg-white/[0.04] p-5"
-              style={{ ['--reveal-index' as string]: 2 }}
+              style={{ ['--reveal-index' as string]: needsSide ? 3 : 2 }}
             >
               <StepHeading
-                step={2}
+                step={needsSide ? 3 : 2}
                 title={`Set up the camera (${detail.recommendedView
                   .toLowerCase()
                   .replace('_', ' ')} view)`}
@@ -562,9 +629,23 @@ export function LiveSessionPage() {
             style={{ ['--reveal-index' as string]: 3 }}
           >
             {phase === 'setup' ? (
-              <Button size="lg" onClick={beginCamera}>
-                Enable camera
-              </Button>
+              <>
+                <Button
+                  size="lg"
+                  onClick={beginCamera}
+                  // A side-specific session cannot start without its side:
+                  // the server would refuse it, and guessing would track the
+                  // wrong limb.
+                  disabled={needsSide && !side}
+                >
+                  Enable camera
+                </Button>
+                {needsSide && !side && (
+                  <p className="mt-2 text-xs text-stage-400">
+                    Choose a side above to continue.
+                  </p>
+                )}
+              </>
             ) : (
               <CameraStage
                 camera={camera}
@@ -590,7 +671,7 @@ export function LiveSessionPage() {
         <>
           <div className="min-w-0">
             <h1 className="type-display truncate text-[15px] text-white">
-              {detail.name}
+              {title}
             </h1>
             <p className="text-xs text-stage-400">
               {ready
@@ -713,6 +794,7 @@ export function LiveSessionPage() {
               postureCorrect={pose?.posture.correct ?? false}
               hasPose={pose !== null}
               goalType={goalType}
+              guidance={pose?.guidance ?? null}
             />
           </div>
 

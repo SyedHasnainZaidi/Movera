@@ -26,6 +26,7 @@ import {
   PrismaClient,
   Prisma,
   ExerciseGoalType,
+  ExerciseSideMode,
   ValidationStatus,
 } from '@prisma/client';
 import { EXERCISE_SEEDS, type RuleConfigSeed } from './seed-exercises';
@@ -131,6 +132,7 @@ async function main(): Promise<void> {
       defaultReps: seed.defaultReps,
       goalType: seed.goalType ?? ExerciseGoalType.REPS,
       defaultHoldSeconds: seed.defaultHoldSeconds ?? null,
+      sideMode: seed.sideMode ?? ExerciseSideMode.NONE,
       isActive: seed.isActive,
     };
 

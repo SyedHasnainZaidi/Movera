@@ -108,6 +108,10 @@ class PoseAnalysisData(BaseModel):
     hold: Optional[HoldDto] = None
     posture: PostureDto
     errors: list[ErrorDto] = Field(default_factory=list)
+    #: Exercise-specific movement cue for the current phase of the repetition
+    #: ("Bend further forward", "Now return upright"). None when the exercise
+    #: defines no cues or tracking is paused.
+    guidance: Optional[str] = None
     latencyMs: LatencyDto
     timestamp: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
@@ -170,6 +174,8 @@ class SessionReadyData(BaseModel):
     #: HOLD only: prescribed seconds, and seconds already credited on a resume.
     targetHoldSeconds: float = 0.0
     resumedFromHeldSeconds: float = 0.0
+    #: "LEFT" / "RIGHT" for a side-specific session, else None.
+    side: Optional[Literal["LEFT", "RIGHT"]] = None
 
 
 class SessionReadyMessage(BaseModel):

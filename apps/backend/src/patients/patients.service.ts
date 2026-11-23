@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { AssignmentStatus, LinkStatus, SessionStatus } from '@prisma/client';
+import {
+  AssignmentStatus,
+  BodySide,
+  LinkStatus,
+  SessionStatus,
+} from '@prisma/client';
 import { AccessControlService } from '../common/access/access-control.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import { AppError, AppErrorCode } from '../common/errors/app-error';
@@ -148,6 +153,7 @@ export class PatientsService {
                 recommendedView: true,
                 goalType: true,
                 defaultHoldSeconds: true,
+                sideMode: true,
               },
             },
           },
@@ -228,6 +234,7 @@ export class PatientsService {
         // See the therapist dashboard: a held session records no repetitions,
         // so a rep-only summary describes it as a failure.
         goalType: s.goalType,
+        side: s.side,
         totalReps: s.totalReps,
         targetTotalReps: s.targetTotalReps,
         heldSec: s.heldSec,
@@ -267,6 +274,7 @@ export class PatientsService {
       date: s.startedAt.toISOString(),
       exercise: s.exercise.name,
       exerciseSlug: s.exercise.slug,
+      side: s.side,
       performanceScore: s.performanceScore ?? 0,
       totalReps: s.totalReps,
       correctReps: s.correctReps,
@@ -277,12 +285,24 @@ export class PatientsService {
           : 0,
     }));
 
+    // Grouped by exercise AND side. Left and right are tracked independently,
+    // so a strong left knee must not average away a weak right one.
     const byExercise = new Map<
       string,
-      { name: string; scores: number[]; reps: number; correct: number }
+      {
+        slug: string;
+        side: BodySide | null;
+        name: string;
+        scores: number[];
+        reps: number;
+        correct: number;
+      }
     >();
     for (const s of sessions) {
-      const entry = byExercise.get(s.exercise.slug) ?? {
+      const key = s.side ? `${s.exercise.slug}:${s.side}` : s.exercise.slug;
+      const entry = byExercise.get(key) ?? {
+        slug: s.exercise.slug,
+        side: s.side,
         name: s.exercise.name,
         scores: [],
         reps: 0,
@@ -291,7 +311,7 @@ export class PatientsService {
       if (s.performanceScore !== null) entry.scores.push(s.performanceScore);
       entry.reps += s.totalReps;
       entry.correct += s.correctReps;
-      byExercise.set(s.exercise.slug, entry);
+      byExercise.set(key, entry);
     }
 
     const errorCounts = await this.prisma.sessionError.groupBy({
@@ -329,8 +349,10 @@ export class PatientsService {
           sessions[sessions.length - 1]?.startedAt.toISOString() ?? null,
       },
       timeline,
-      byExercise: [...byExercise.entries()].map(([slug, entry]) => ({
-        slug,
+      byExercise: [...byExercise.entries()].map(([key, entry]) => ({
+        key,
+        slug: entry.slug,
+        side: entry.side,
         name: entry.name,
         sessions: entry.scores.length,
         averageScore:

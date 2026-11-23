@@ -144,6 +144,9 @@ async def pose_session_socket(
                 "ruleConfigVersion": context.rule_config_version,
                 "goalType": context.goal_type,
                 "targetHoldSeconds": context.target_hold_sec,
+                # The side comes from the session row, like everything above:
+                # never from the browser.
+                "side": context.side,
             }
         )
     except (KeyError, ValueError) as exc:
@@ -198,6 +201,7 @@ async def pose_session_socket(
                 goalType="HOLD" if not analyzer.counts_reps else "REPS",
                 targetHoldSeconds=context.target_hold_sec,
                 resumedFromHeldSeconds=context.current_held_seconds,
+                side=rule_config.side,
             )
         ),
     )
@@ -598,6 +602,7 @@ def _build_update(
             score=analysis.posture_score,
         ),
         errors=[ErrorDto(**_error_to_dto(e)) for e in analysis.errors],
+        guidance=analysis.guidance,
         latencyMs=LatencyDto(
             decode=round(decode_ms, 2),
             inference=round(inference_ms, 2),

@@ -41,12 +41,17 @@ from app.feedback.codes import (
     penalty_for,
 )
 from app.geometry.angles import (
+    VERTICAL_DOWN,
+    VERTICAL_UP,
     angle_between,
     angle_from_vertical,
     average_angle,
     clamp,
+    euclidean_distance,
     horizontal_distance,
+    line_tilt,
     midpoint,
+    signed_sagittal_angle,
     to_reference_scale,
     vertical_distance,
 )
@@ -153,6 +158,14 @@ class RuleConfig:
     goal_type: GoalType = GoalType.REPS
     #: Seconds of correct alignment prescribed. Meaningful only for HOLD.
     target_hold_seconds: float = 0.0
+    #: "LEFT" / "RIGHT" for a side-specific session, None otherwise. Already
+    #: substituted into every landmark name and message below - kept only so
+    #: the session can report which side it analysed.
+    side: Optional[str] = None
+    #: Movement guidance per state ("UP", "GOING_DOWN", "DOWN", "GOING_UP",
+    #: "IDLE") plus "REP" for the frame a repetition completes. Optional:
+    #: exercises without cues fall back to the HUD's generic encouragement.
+    cues: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def counts_reps(self) -> bool:
@@ -160,6 +173,13 @@ class RuleConfig:
 
     @staticmethod
     def from_payload(payload: Mapping[str, Any]) -> "RuleConfig":
+        # Side templating happens FIRST, so everything below - landmark
+        # parsing included - only ever sees concrete left_/right_ names. A
+        # side-specific config reaching here without a side is rejected rather
+        # than guessed: analysing the wrong limb would be worse than refusing.
+        side = _normalise_side(payload.get("side"))
+        payload = _apply_side(payload, side)
+
         raw_landmarks = payload.get("requiredLandmarks") or []
         landmarks: list[Landmark] = []
         for name in raw_landmarks:
@@ -195,7 +215,100 @@ class RuleConfig:
                 payload.get("repCorrectnessThreshold", 70.0)
             ),
             smoothing_window=int(payload.get("smoothingWindow", 5)),
+            side=side,
+            cues={
+                str(k): str(v)
+                for k, v in dict(
+                    (raw_movement or {}).get("cues") or {}
+                ).items()
+            },
         )
+
+
+# ---------------------------------------------------------------------------
+# Side templating
+# ---------------------------------------------------------------------------
+#
+# A side-specific rule config is written once, with placeholders, and becomes
+# a concrete left or right config when a session starts:
+#
+#   {side}  / {other}   -> "left" / "right"   (landmark names: "{side}_knee")
+#   {Side}  / {Other}   -> "Left" / "Right"   (patient-facing messages)
+#   {SIDE}  / {OTHER}   -> "LEFT" / "RIGHT"
+#
+# Doing it here, once, is what prevents left/right mix-ups: every landmark,
+# angle, rule and message for a session is derived from the one side the
+# patient selected, and there is no code path that picks a side by itself.
+
+_SIDE_TOKENS = ("{side}", "{other}", "{Side}", "{Other}", "{SIDE}", "{OTHER}")
+
+
+def _normalise_side(raw: Any) -> Optional[str]:
+    if raw is None or raw == "":
+        return None
+    value = str(raw).strip().upper()
+    if value not in ("LEFT", "RIGHT"):
+        raise ValueError(f"Unknown side: {raw!r}")
+    return value
+
+
+def _contains_side_token(value: Any) -> bool:
+    if isinstance(value, str):
+        return any(token in value for token in _SIDE_TOKENS)
+    if isinstance(value, Mapping):
+        return any(
+            _contains_side_token(k) or _contains_side_token(v)
+            for k, v in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(_contains_side_token(v) for v in value)
+    return False
+
+
+def _substitute(value: Any, replacements: Mapping[str, str]) -> Any:
+    if isinstance(value, str):
+        for token, replacement in replacements.items():
+            value = value.replace(token, replacement)
+        return value
+    if isinstance(value, Mapping):
+        return {
+            _substitute(k, replacements): _substitute(v, replacements)
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_substitute(v, replacements) for v in value]
+    return value
+
+
+def _apply_side(payload: Mapping[str, Any], side: Optional[str]) -> Mapping[str, Any]:
+    templated_keys = (
+        "requiredLandmarks",
+        "angleDefinitions",
+        "movementStateConfig",
+        "postureRules",
+    )
+    sided = any(_contains_side_token(payload.get(key)) for key in templated_keys)
+    if not sided:
+        return payload
+    if side is None:
+        raise ValueError(
+            "This exercise is side-specific but the session has no side selected"
+        )
+
+    other = "RIGHT" if side == "LEFT" else "LEFT"
+    replacements = {
+        "{side}": side.lower(),
+        "{other}": other.lower(),
+        "{Side}": side.capitalize(),
+        "{Other}": other.capitalize(),
+        "{SIDE}": side,
+        "{OTHER}": other,
+    }
+    result = dict(payload)
+    for key in templated_keys:
+        if key in result:
+            result[key] = _substitute(result[key], replacements)
+    return result
 
 
 @dataclass(slots=True)
@@ -219,6 +332,10 @@ class FrameAnalysis:
     #: here: that needs the prescription, which lives on the session context.
     #: See LiveSession.goal_reached().
     hold: Optional[HoldSnapshot] = None
+    #: Exercise-specific movement cue for the current state ("Bend further
+    #: forward", "Now return upright"), or None when the exercise defines none
+    #: or tracking is not valid.
+    guidance: Optional[str] = None
 
 
 @dataclass(slots=True)
@@ -367,6 +484,20 @@ class BaseExerciseAnalyzer:
           vertical - tilt of ``lower -> upper`` away from gravity
           average  - mean of other named angles (left/right pairs)
           gap_x / gap_y - absolute separation, for alignment rules
+          distance - straight-line separation (a body-size yardstick)
+          signed_tilt - forward(+)/backward(-) rotation of pivot -> end
+                     from a reference direction, relative to where the
+                     patient faces. See signed_sagittal_angle.
+          line_tilt - tilt of line a -> b against line refA -> refB,
+                     positive towards ``towards`` ("left"/"right").
+          confidence_gap - mean keypoint confidence of ``other`` minus that
+                     of ``subject``. Positive = the other side is the one
+                     the camera sees more clearly.
+
+        Names beginning with an underscore are INTERNAL measurements (ratios,
+        confidence gaps): rules may test them, but they are not shown to the
+        patient or stored in repetition summaries, because they are not
+        angles and would be shown with a degree sign.
         """
         results: dict[str, Optional[float]] = {}
 
@@ -443,7 +574,82 @@ class BaseExerciseAnalyzer:
                 frame.width,
             )
 
+        if kind == "distance":
+            return to_reference_scale(
+                euclidean_distance(
+                    self._resolve_point(frame, str(definition["a"])),
+                    self._resolve_point(frame, str(definition["b"])),
+                ),
+                frame.width,
+            )
+
+        if kind == "signed_tilt":
+            value = signed_sagittal_angle(
+                self._resolve_point(frame, str(definition["pivot"])),
+                self._resolve_point(frame, str(definition["end"])),
+                self._resolve_reference(frame, definition.get("reference", "up")),
+                *self._resolve_pair(frame, definition.get("facing")),
+            )
+            if value is None:
+                return None
+            return -value if definition.get("positive") == "backward" else value
+
+        if kind == "line_tilt":
+            value = line_tilt(
+                self._resolve_point(frame, str(definition["a"])),
+                self._resolve_point(frame, str(definition["b"])),
+                self._resolve_point(frame, str(definition["refA"])),
+                self._resolve_point(frame, str(definition["refB"])),
+            )
+            if value is None:
+                return None
+            # line_tilt is positive when ``b`` drops. Configs pass the right
+            # landmark as ``a`` and the left as ``b``, so positive means
+            # "towards the patient's left"; flip it for a right-side session.
+            return -value if definition.get("towards") == "right" else value
+
+        if kind == "confidence_gap":
+            subject = [str(n) for n in definition.get("subject", [])]
+            other = [str(n) for n in definition.get("other", [])]
+            if not subject or not other:
+                return None
+            return self._mean_confidence(frame, other) - self._mean_confidence(
+                frame, subject
+            )
+
         return None
+
+    def _resolve_pair(
+        self, frame: PoseFrame, names: Any
+    ) -> tuple[Optional[Keypoint], Optional[Keypoint]]:
+        if not isinstance(names, (list, tuple)) or len(names) != 2:
+            return None, None
+        return (
+            self._resolve_point(frame, str(names[0])),
+            self._resolve_point(frame, str(names[1])),
+        )
+
+    def _resolve_reference(
+        self, frame: PoseFrame, reference: Any
+    ) -> Optional[tuple[float, float]]:
+        """A reference direction: "up", "down", or [from, to] landmarks."""
+        if reference == "up":
+            return VERTICAL_UP
+        if reference == "down":
+            return VERTICAL_DOWN
+        start, end = self._resolve_pair(frame, reference)
+        if start is None or end is None:
+            return None
+        return (end.x - start.x, end.y - start.y)
+
+    def _mean_confidence(self, frame: PoseFrame, names: Sequence[str]) -> float:
+        values: list[float] = []
+        for name in names:
+            landmark = parse_landmark(name)
+            # A keypoint YOLO dropped for low confidence counts as 0: not
+            # seeing it at all is the strongest possible "not facing" signal.
+            values.append(frame.visibility_of(landmark) if landmark else 0.0)
+        return sum(values) / len(values) if values else 0.0
 
     # -- posture rules ------------------------------------------------------
 
@@ -460,38 +666,92 @@ class BaseExerciseAnalyzer:
         errors: list[DetectedError] = []
 
         for rule in self.config.posture_rules:
+            # Gate rules are framing checks, evaluated separately and before
+            # the movement machine - see evaluate_gates.
+            if rule.get("gate"):
+                continue
             if not self._rule_applies(rule, state):
                 continue
-
-            angle_name = str(rule.get("angle", ""))
-            observed = angles.get(angle_name)
-            if observed is None:
-                continue
-
-            minimum = rule.get("min")
-            maximum = rule.get("max")
-            violated = (minimum is not None and observed < float(minimum)) or (
-                maximum is not None and observed > float(maximum)
-            )
-            if not violated:
-                continue
-
-            try:
-                code = ErrorCode(str(rule["code"]))
-            except ValueError:
-                continue  # unknown code in config - ignore rather than crash
-
-            errors.append(
-                build_error(
-                    code,
-                    joint=str(rule.get("joint")) if rule.get("joint") else None,
-                    observed=observed,
-                    expected_min=float(minimum) if minimum is not None else None,
-                    expected_max=float(maximum) if maximum is not None else None,
-                )
-            )
+            error = self._evaluate_rule(rule, angles)
+            if error is not None:
+                errors.append(error)
 
         return errors
+
+    def evaluate_gates(
+        self, angles: Mapping[str, Optional[float]]
+    ) -> list[DetectedError]:
+        """Framing checks that must pass before any movement is counted.
+
+        A rule with ``"gate": true`` describes how the patient must be
+        positioned - side-on rather than facing the camera, the selected side
+        towards the lens. When one fails, the frame is treated exactly like a
+        frame with missing landmarks: the movement machine is frozen, so a
+        movement performed from the wrong angle can never become a
+        repetition. Counting is paused, not silently continued.
+
+        Like posture rules, an unmeasurable gate is skipped: an unknowable
+        orientation is not evidence of a wrong one, and the required-landmark
+        check has already refused the frame if the body cannot be seen.
+        """
+        errors: list[DetectedError] = []
+        for rule in self.config.posture_rules:
+            if not rule.get("gate"):
+                continue
+            error = self._evaluate_rule(rule, angles)
+            if error is not None:
+                errors.append(error)
+        return errors
+
+    @staticmethod
+    def _evaluate_rule(
+        rule: Mapping[str, Any], angles: Mapping[str, Optional[float]]
+    ) -> Optional[DetectedError]:
+        angle_name = str(rule.get("angle", ""))
+        observed = angles.get(angle_name)
+        if observed is None:
+            return None
+
+        minimum = rule.get("min")
+        maximum = rule.get("max")
+        violated = (minimum is not None and observed < float(minimum)) or (
+            maximum is not None and observed > float(maximum)
+        )
+        if not violated:
+            return None
+
+        try:
+            code = ErrorCode(str(rule["code"]))
+        except ValueError:
+            return None  # unknown code in config - ignore rather than crash
+
+        # Internal measurements (ratios, confidence gaps) are not angles. The
+        # HUD prints `observed` with a degree sign, so for those the numbers
+        # are withheld and the rule's own message carries the meaning.
+        internal = angle_name.startswith("_")
+        message = rule.get("message")
+        return build_error(
+            code,
+            joint=str(rule.get("joint")) if rule.get("joint") else None,
+            observed=None if internal else observed,
+            expected_min=(
+                float(minimum) if minimum is not None and not internal else None
+            ),
+            expected_max=(
+                float(maximum) if maximum is not None and not internal else None
+            ),
+            message_override=str(message) if message else None,
+        )
+
+    def guidance_for(
+        self, state: MovementState, rep_completed: bool
+    ) -> Optional[str]:
+        cues = self.config.cues
+        if not cues:
+            return None
+        if rep_completed and cues.get("REP"):
+            return cues["REP"]
+        return cues.get(state.value)
 
     @staticmethod
     def _rule_applies(rule: Mapping[str, Any], state: MovementState) -> bool:
@@ -593,6 +853,14 @@ class BaseExerciseAnalyzer:
         }
 
         tracking_valid = visible
+        if visible:
+            # Framing gates run on the SMOOTHED values, so one noisy frame
+            # cannot pause a session, and before the movement machine, so a
+            # failed gate freezes it for this frame.
+            gate_errors = self.evaluate_gates(smoothed)
+            if gate_errors:
+                errors.extend(gate_errors)
+                tracking_valid = False
         rep_event: Optional[RepEvent] = None
         hold_snapshot: Optional[HoldSnapshot] = None
 
@@ -627,8 +895,13 @@ class BaseExerciseAnalyzer:
         reported = {
             name: round(value, 1)
             for name, value in smoothed.items()
-            if value is not None
+            if value is not None and not name.startswith("_")
         }
+        guidance = (
+            self.guidance_for(movement_state, rep_event is not None)
+            if tracking_valid and self.hold is None
+            else None
+        )
 
         if tracking_valid:
             self.accumulator.observe(score, confidence, errors, reported)
@@ -648,6 +921,7 @@ class BaseExerciseAnalyzer:
             rep_event=rep_event,
             rep_count=self.rep_count,
             hold=hold_snapshot,
+            guidance=guidance,
         )
 
     def flush_rep(self) -> tuple[float, float, dict, dict[str, int]]:

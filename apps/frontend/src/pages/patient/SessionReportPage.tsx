@@ -15,6 +15,7 @@ import {
   StatStrip,
 } from '../../components/ui';
 import { formatSeconds } from '../../lib/prescription';
+import { withSide } from '../../lib/side';
 import { useAuthStore } from '../../stores/authStore';
 import type { SessionReport } from '../../types/api';
 
@@ -69,7 +70,7 @@ export function SessionReportPage() {
     <div className="mx-auto max-w-4xl px-4 py-8">
       <Reveal>
         <PageHeader
-          title={data.exercise.name}
+          title={withSide(data.exercise.name, data.side)}
           description={`${new Date(data.startedAt).toLocaleString()} · ${minutes}m ${seconds}s${
             isTherapist ? ` · ${data.patient.name}` : ''
           }`}

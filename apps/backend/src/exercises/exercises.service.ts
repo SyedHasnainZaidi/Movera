@@ -44,6 +44,7 @@ export class ExercisesService {
       defaultReps: exercise.defaultReps,
       goalType: exercise.goalType,
       defaultHoldSeconds: exercise.defaultHoldSeconds,
+      sideMode: exercise.sideMode,
       isActive: exercise.isActive,
       // An exercise without an active rule config cannot be analysed, so the
       // UI must be able to tell before a therapist prescribes it.
@@ -86,6 +87,7 @@ export class ExercisesService {
       defaultReps: exercise.defaultReps,
       goalType: exercise.goalType,
       defaultHoldSeconds: exercise.defaultHoldSeconds,
+      sideMode: exercise.sideMode,
       isActive: exercise.isActive,
       analysis: ruleConfig
         ? {

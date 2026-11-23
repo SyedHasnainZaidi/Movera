@@ -18,6 +18,7 @@ import {
   describeAchievement,
   describePrescription,
 } from '../../lib/prescription';
+import { withSide } from '../../lib/side';
 import { useAuthStore } from '../../stores/authStore';
 import type {
   Assignment,
@@ -196,7 +197,7 @@ export function PatientDashboardPage() {
                     >
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-ink-900">
-                          {session.exercise.name}
+                          {withSide(session.exercise.name, session.side)}
                         </p>
                         <p className="type-measure text-xs text-ink-500">
                           {new Date(session.startedAt).toLocaleDateString()} ·{' '}

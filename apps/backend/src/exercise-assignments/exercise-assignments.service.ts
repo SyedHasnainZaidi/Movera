@@ -373,6 +373,19 @@ export class ExerciseAssignmentsService {
       where: { assignmentId, status: SessionStatus.COMPLETED },
     });
 
+    // Per side, for side-specific exercises. Left and right are separate
+    // sessions; showing them apart is what stops a patient (or therapist)
+    // reading "3 sessions done" as both legs done when only one was.
+    const bySide = await this.prisma.exerciseSession.groupBy({
+      by: ['side'],
+      where: { assignmentId, status: SessionStatus.COMPLETED, side: { not: null } },
+      _count: { _all: true },
+    });
+    const completedSessionsBySide = {
+      LEFT: bySide.find((row) => row.side === 'LEFT')?._count._all ?? 0,
+      RIGHT: bySide.find((row) => row.side === 'RIGHT')?._count._all ?? 0,
+    };
+
     return {
       ...this.toDto(assignment),
       instructions: assignment.instructions,
@@ -385,9 +398,11 @@ export class ExerciseAssignmentsService {
         framingInstructions: assignment.exercise.framingInstructions,
         targetBodyArea: assignment.exercise.targetBodyArea,
         goalType: assignment.exercise.goalType,
+        sideMode: assignment.exercise.sideMode,
       },
       therapistName: `${assignment.therapist.user.firstName} ${assignment.therapist.user.lastName}`,
       completedSessions,
+      completedSessionsBySide,
     };
   }
 

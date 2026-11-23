@@ -41,6 +41,20 @@ class ErrorCode(str, Enum):
     LOW_CONFIDENCE = "LOW_CONFIDENCE"
     MULTIPLE_PEOPLE = "MULTIPLE_PEOPLE"
     FRAME_DECODE_ERROR = "FRAME_DECODE_ERROR"
+    #: The patient is not standing in the orientation the exercise is measured
+    #: from (e.g. facing the camera for a side-view exercise). Counting pauses.
+    WRONG_CAMERA_VIEW = "WRONG_CAMERA_VIEW"
+    #: Side-on, but with the OTHER side towards the camera, so the selected
+    #: limb is the hidden one. Counting pauses.
+    WRONG_SIDE_FACING = "WRONG_SIDE_FACING"
+
+    # --- side-specific exercises -------------------------------------------
+    #: The limb (or bend direction) that was NOT selected is the one moving.
+    WRONG_SIDE_MOVEMENT = "WRONG_SIDE_MOVEMENT"
+    LOSS_OF_BALANCE = "LOSS_OF_BALANCE"
+    #: A body part that should stay still is moving to help the exercise
+    #: (thigh lifting off the chair, upper arm swinging).
+    EXCESSIVE_MOVEMENT = "EXCESSIVE_MOVEMENT"
 
     # --- squat --------------------------------------------------------------
     INSUFFICIENT_DEPTH = "INSUFFICIENT_DEPTH"
@@ -79,6 +93,10 @@ TRACKING_CODES: frozenset[ErrorCode] = frozenset(
         ErrorCode.LOW_CONFIDENCE,
         ErrorCode.MULTIPLE_PEOPLE,
         ErrorCode.FRAME_DECODE_ERROR,
+        # Framing problems, not technique: the patient is not marked down for
+        # them, but they DO pause counting - see BaseExerciseAnalyzer.analyze.
+        ErrorCode.WRONG_CAMERA_VIEW,
+        ErrorCode.WRONG_SIDE_FACING,
     }
 )
 
@@ -194,6 +212,34 @@ CATALOGUE: dict[ErrorCode, FeedbackEntry] = {
         Severity.WARNING,
         "Straighten your back.",
         30.0,
+    ),
+    # --- added with the side-specific exercises. Every rule that uses these
+    # supplies its own exercise-specific wording through the rule's `message`;
+    # the text here is only the fallback. ----------------------------------
+    ErrorCode.WRONG_CAMERA_VIEW: FeedbackEntry(
+        Severity.CRITICAL,
+        "Incorrect camera position - check the set-up instructions. Counting is paused.",
+        0.0,
+    ),
+    ErrorCode.WRONG_SIDE_FACING: FeedbackEntry(
+        Severity.CRITICAL,
+        "Turn around - the side you selected must face the camera. Counting is paused.",
+        0.0,
+    ),
+    ErrorCode.WRONG_SIDE_MOVEMENT: FeedbackEntry(
+        Severity.WARNING,
+        "Movement detected on the wrong side - use the side you selected.",
+        15.0,
+    ),
+    ErrorCode.LOSS_OF_BALANCE: FeedbackEntry(
+        Severity.WARNING,
+        "Maintain balance - hold a chair or wall for support if you need to.",
+        15.0,
+    ),
+    ErrorCode.EXCESSIVE_MOVEMENT: FeedbackEntry(
+        Severity.WARNING,
+        "Keep the rest of your body still - move only the working joint.",
+        20.0,
     ),
 }
 

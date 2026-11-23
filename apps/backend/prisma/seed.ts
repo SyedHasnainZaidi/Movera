@@ -112,6 +112,8 @@ async function main(): Promise<void> {
         defaultReps: seed.defaultReps,
         goalType: seed.goalType ?? ExerciseGoalType.REPS,
         defaultHoldSeconds: seed.defaultHoldSeconds ?? null,
+        // Left as undefined for NONE so the column default applies.
+        sideMode: seed.sideMode,
         isActive: seed.isActive,
       },
     });
