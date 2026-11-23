@@ -816,12 +816,23 @@ export const EXERCISE_SEEDS: ExerciseSeed[] = [
       movementStateConfig: {
         primaryAngle: 'neckTilt',
         direction: 'INCREASING',
-        // Normal lateral flexion is roughly 35-45 deg; 25 deg is a clear,
-        // comfortable tilt. Below 8 deg counts as upright.
-        restAngle: 8,
-        peakAngle: 25,
-        hysteresisDeg: 4,
-        minStateFrames: 3,
+        // Normal lateral flexion is roughly 35-45 deg, but on camera the
+        // eye-line tilt reads lower than the true neck angle, and 25 deg
+        // in practice demanded ear-to-shoulder. 15 deg is a clear tilt most
+        // people can reach comfortably. Below 5 deg counts as upright.
+        //
+        // The band BETWEEN rest and peak must stay wide enough for the
+        // return to be seen: a repetition only completes via GOING_UP, and
+        // a head returning through a narrow band in fewer than
+        // minStateFrames frames skips straight from DOWN to UP and is lost.
+        // With 3 deg hysteresis the return band is 5..12 deg, and two
+        // frames (the same dwell most exercises use) are enough at 7 fps.
+        // Head wobble at rest stays inside the rest band and the 1 s
+        // minimum repetition still rejects twitches.
+        restAngle: 5,
+        peakAngle: 15,
+        hysteresisDeg: 3,
+        minStateFrames: 2,
         cooldownMs: 700,
         minRepDurationMs: 1000,
         maxRepDurationMs: 15000,
@@ -839,7 +850,7 @@ export const EXERCISE_SEEDS: ExerciseSeed[] = [
           code: 'INCOMPLETE_ROM',
           angle: 'neckTilt',
           when: 'at_peak',
-          min: 28,
+          min: 17,
           joint: 'neck',
           message:
             'Move further - bring your {side} ear a little closer to your shoulder.',

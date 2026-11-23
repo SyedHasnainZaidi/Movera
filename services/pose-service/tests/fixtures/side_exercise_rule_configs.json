@@ -178,10 +178,10 @@
       "movementStateConfig": {
         "primaryAngle": "neckTilt",
         "direction": "INCREASING",
-        "restAngle": 8,
-        "peakAngle": 25,
-        "hysteresisDeg": 4,
-        "minStateFrames": 3,
+        "restAngle": 5,
+        "peakAngle": 15,
+        "hysteresisDeg": 3,
+        "minStateFrames": 2,
         "cooldownMs": 700,
         "minRepDurationMs": 1000,
         "maxRepDurationMs": 15000,
@@ -199,7 +199,7 @@
           "code": "INCOMPLETE_ROM",
           "angle": "neckTilt",
           "when": "at_peak",
-          "min": 28,
+          "min": 17,
           "joint": "neck",
           "message": "Move further - bring your {side} ear a little closer to your shoulder."
         },
