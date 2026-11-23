@@ -250,7 +250,22 @@ class MovementMachine:
             self._reached_peak = True
             return None
 
-        if target is MovementState.UP and previous is MovementState.GOING_UP:
+        # Returning to rest completes the attempt - including straight from
+        # the peak. At the browser's ~7 fps, with the median filter's lag, a
+        # normal-speed return often crosses the intermediate band between
+        # two frames, so GOING_UP is never observed. Requiring it threw
+        # those repetitions away: a patient standing up from a squat at an
+        # ordinary pace scored nothing. This mirrors the descent, where
+        # reaching the peak straight from rest already starts the attempt.
+        #
+        # Every safeguard still applies in _try_complete: the peak must have
+        # been reached (with hysteresis and dwell on both bands), plus the
+        # cooldown and the minimum/maximum repetition duration - so jitter
+        # and half movements are still rejected.
+        if target is MovementState.UP and previous in (
+            MovementState.GOING_UP,
+            MovementState.DOWN,
+        ):
             return self._try_complete(now)
 
         return None

@@ -94,6 +94,31 @@ class TestFullRepetition:
         assert events == [1, 2, 3]
         assert m.rep_count == 3
 
+    def test_fast_return_straight_to_rest_counts(self) -> None:
+        """A normal-speed stand-up can cross the intermediate band between
+        two frames, so GOING_UP is never seen. That is still a complete
+        repetition and must count - it used to be thrown away."""
+        m = MovementMachine(config=SQUAT)
+        reps = hold(170) + ramp(170, 95) + hold(92) + hold(172, 4)
+        assert feed(m, reps) == [1]
+        assert m.state is MovementState.UP
+
+    def test_fast_returns_count_every_time(self) -> None:
+        m = MovementMachine(config=SQUAT)
+        squat = hold(170) + ramp(170, 95) + hold(92) + hold(172, 4)
+        assert feed(m, squat * 3) == [1, 2, 3]
+
+    def test_fast_return_still_needs_the_peak(self) -> None:
+        """Skipping GOING_UP is accepted only from DOWN: a dip that never
+        reached the peak band still counts nothing."""
+        m = MovementMachine(config=SQUAT)
+        assert feed(m, hold(170) + ramp(170, 115) + hold(172, 4)) == []
+
+    def test_fast_return_still_obeys_minimum_duration(self) -> None:
+        m = MovementMachine(config=SQUAT)
+        squat = hold(170) + ramp(170, 95) + hold(92) + hold(172, 4)
+        assert feed(m, squat, step=0.001) == []
+
     def test_visits_all_four_states(self) -> None:
         m = MovementMachine(config=SQUAT)
         seen: set[MovementState] = set()

@@ -249,13 +249,16 @@ export const EXERCISE_SEEDS: ExerciseSeed[] = [
         // flexion - the far leg is occluded and the median filter trims the
         // extremes of the descent.
         //
-        // peak 130 corresponds to roughly 35 deg of true knee flexion: a clear
-        // half squat, not a token dip, but reachable without having to hit
-        // depth that a camera struggles to see. rest 155 means the patient no
-        // longer has to lock out completely between repetitions.
-        restAngle: 155,
-        peakAngle: 130,
-        hysteresisDeg: 8,
+        // Loosened after patient testing found the squat too demanding.
+        // peak 140 (was 130) is a comfortable partial squat - still a clear
+        // bend, not a token dip. rest 152 (was 155) means the patient does
+        // not have to straighten fully between repetitions. Hysteresis 4
+        // (was 8) keeps the bands from overlapping at the narrower spacing;
+        // the dwell, cooldown and minimum repetition time still reject
+        // jitter. A shallower dip (~145 deg) deliberately does not count.
+        restAngle: 152,
+        peakAngle: 140,
+        hysteresisDeg: 4,
         minStateFrames: 2,
         cooldownMs: 600,
         minRepDurationMs: 800,
@@ -821,14 +824,12 @@ export const EXERCISE_SEEDS: ExerciseSeed[] = [
         // in practice demanded ear-to-shoulder. 15 deg is a clear tilt most
         // people can reach comfortably. Below 5 deg counts as upright.
         //
-        // The band BETWEEN rest and peak must stay wide enough for the
-        // return to be seen: a repetition only completes via GOING_UP, and
-        // a head returning through a narrow band in fewer than
-        // minStateFrames frames skips straight from DOWN to UP and is lost.
-        // With 3 deg hysteresis the return band is 5..12 deg, and two
-        // frames (the same dwell most exercises use) are enough at 7 fps.
-        // Head wobble at rest stays inside the rest band and the 1 s
-        // minimum repetition still rejects twitches.
+        // 3 deg hysteresis keeps the rest and peak bands apart at this
+        // narrower spacing (return band 5..12 deg), with the same two-frame
+        // dwell most exercises use. A fast return that skips that band
+        // still counts (see MovementMachine._transition). Head wobble at
+        // rest stays inside the rest band, and the 1 s minimum repetition
+        // still rejects twitches.
         restAngle: 5,
         peakAngle: 15,
         hysteresisDeg: 3,
